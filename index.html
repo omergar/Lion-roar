@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Missile Defense</title>
+<title>Lion's Roar</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; }
@@ -25,7 +25,7 @@ window.addEventListener('resize', resize);
 
 const W = () => c.width;
 const H = () => c.height;
-const GROUND = () => c.height - 70;
+const GROUND = () => c.height - 130;
 const BASE = () => ({ x: 70, y: GROUND() - 60 });
 
 let score = 0, lives = 3, gameOver = false;
@@ -299,7 +299,7 @@ function drawHUD() {
   // Instructions bottom
   ctx.fillStyle='rgba(255,255,255,0.4)';
   ctx.font=`${Math.max(11,W()*0.019)}px Arial`;
-  ctx.fillText('גרור את הרוגטקה שמאלה ושחרר • לחץ שוב בטיסה להטיל פצצה', W()/2, H()-15);
+  ctx.fillText('גרור את הרוגטקה שמאלה ושחרר • לחץ שוב בטיסה להטיל פצצה', W()/2, GROUND()+58);
 
   if (phase==='flying') {
     ctx.fillStyle='rgba(255,255,50,0.95)';
