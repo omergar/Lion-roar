@@ -29,6 +29,7 @@ const GROUND = () => c.height - (c.width > c.height ? 85 : 130);
 const BASE = () => ({ x: 70, y: GROUND() - 60 });
 
 let score = 0, lives = 3, gameOver = false;
+let highScore = parseInt(localStorage.getItem('lionRoarHighScore') || '0');
 let phase = 'aim';
 let plane = null, bomb = null;
 let explosions = [], missiles = [];
@@ -129,7 +130,7 @@ function spawnTruck() {
     targetX: stopX,
     state: 'driving', // driving|raising|ready|fired|retreating
     angle: 0,         // 0=horizontal, 90=vertical (launch)
-    readyTimer: 140 + Math.random()*80,
+    readyTimer: Math.max(50, 140 - diffProgress() * 80) + Math.random() * 40,
     id: Math.random()
   };
 }
@@ -157,9 +158,10 @@ function fireMissile() {
   const e = enginePt(t);
   const n = nosePt(t);
   // At launch (angle=90), missile goes up-left
+  const mSpeed = 1 + diffProgress() * 0.6; // 1.0x → 1.6x speed multiplier
   missiles.push({
     x: (e.x+n.x)/2, y: (e.y+n.y)/2,
-    vx: -4, vy: -5.5,
+    vx: -4 * mSpeed, vy: -5.5 * mSpeed,
     trail: [], dead: false, truckId: t.id
   });
   t.state = 'fired';
@@ -175,12 +177,20 @@ function showMsg(txt, color) {
   msgTimer = 100;
 }
 function updateUI() { /* drawn on canvas */ }
-function endGame() { gameOver = true; showMsg('💔 Game Over\nלחץ להתחלה מחדש','#ff4444'); }
+function saveHighScore() {
+  if (score > highScore) { highScore = score; localStorage.setItem('lionRoarHighScore', highScore); }
+}
+function endGame() { saveHighScore(); gameOver = true; showMsg('💔 Game Over\nלחץ להתחלה מחדש','#ff4444'); }
 function resetGame() {
+  saveHighScore();
   score=0; lives=3; gameOver=false; plane=null; bomb=null; phase='aim';
   explosions=[]; missiles=[]; truck=null; frameCount=0; nextSpawn=120;
   document.getElementById('msg').style.opacity='0';
 }
+
+// ── DIFFICULTY ──
+// Returns a 0–1 progress value (caps at score 20)
+function diffProgress() { return Math.min(score / 20, 1); }
 
 // ── UPDATE ──
 function update() {
@@ -188,13 +198,14 @@ function update() {
   frameCount++;
   if (frameCount >= nextSpawn && !truck) {
     spawnTruck();
-    nextSpawn = frameCount + 400 + Math.random()*200;
+    const spawnGap = 400 - diffProgress() * 200; // 400 → 200 frames
+    nextSpawn = frameCount + Math.max(spawnGap, 180) + Math.random() * 100;
   }
 
   if (truck) {
     const t = truck;
     if (t.state==='driving') {
-      t.x -= 2.5;
+      t.x -= 2.5 + diffProgress() * 2.5; // 2.5 → 5.0 px/frame
       if (t.x <= t.targetX) { t.x = t.targetX; t.state = 'raising'; }
     } else if (t.state==='raising') {
       t.angle += 1.0;
@@ -295,6 +306,19 @@ function drawHUD() {
   ctx.font=`bold ${Math.max(14,W()*0.025)}px Arial`;
   ctx.textAlign='center';
   ctx.fillText(`ניקוד: ${score}   ${'❤️'.repeat(Math.max(0,lives))}`, W()/2, fh+22);
+  // High score
+  if (highScore > 0) {
+    ctx.fillStyle='rgba(255,220,100,0.7)';
+    ctx.font=`${Math.max(11,W()*0.018)}px Arial`;
+    ctx.fillText(`שיא: ${highScore}`, W()/2, fh+42);
+  }
+  // Difficulty indicator
+  const level = Math.floor(diffProgress() * 5) + 1;
+  const levelColors = ['#88ff88','#aaff44','#ffee00','#ff8800','#ff2200'];
+  ctx.fillStyle = levelColors[Math.min(level-1, 4)];
+  ctx.font=`${Math.max(10,W()*0.016)}px Arial`;
+  ctx.textAlign='right';
+  ctx.fillText(`רמה ${level}`, W() - 12, fh+22);
 
   // Instructions bottom
   ctx.fillStyle='rgba(255,255,255,0.4)';
