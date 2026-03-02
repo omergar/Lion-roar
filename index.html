@@ -37,6 +37,7 @@ let msgTimer = 0, frameCount = 0, nextSpawn = 120;
 let truck = null, hole = null;
 let isDragging = false, dragStart = null, dragCurrent = null;
 let currentTool = 'plane'; // 'plane' | 'amm'
+let gameState = 'welcome';
 const MAX_PULL = 70;
 
 // ── Flags (drawn as canvas graphics) ──
@@ -81,6 +82,7 @@ function drawIsraelFlag(x, y, w, h) {
 // ── INPUT ──
 function getXY(e) { return { x: e.clientX ?? e.pageX, y: e.clientY ?? e.pageY }; }
 function onDown(e) {
+  if (gameState === 'welcome') { gameState = 'playing'; return; }
   if (gameOver) { resetGame(); return; }
   const pt = getXY(e);
   if (phase === 'aim') { isDragging = true; dragStart = {...pt}; dragCurrent = {...pt}; }
@@ -102,6 +104,7 @@ c.addEventListener('mouseup', onUp);
 c.addEventListener('touchstart', e=>{e.preventDefault();onDown(e.touches[0]);},{passive:false});
 c.addEventListener('touchmove',  e=>{e.preventDefault();onMove(e.touches[0]);},{passive:false});
 c.addEventListener('touchend',   e=>{e.preventDefault();onUp(e.changedTouches[0]);},{passive:false});
+window.addEventListener('keydown', e => { if (gameState === 'welcome') gameState = 'playing'; });
 
 // ── TOOL SELECTION ──
 function pickTool() {
@@ -490,17 +493,96 @@ function drawSlingshot() {
   }
 }
 
-function drawPlaneAt(x,y,angle,preview){
-  ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
-  ctx.fillStyle=preview?'rgba(80,150,255,0.7)':'#5599ff';
-  ctx.beginPath(); ctx.ellipse(0,0,18,7,0,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#88bbff';
-  ctx.beginPath(); ctx.moveTo(18,0); ctx.lineTo(26,0); ctx.lineTo(18,4); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='#2255bb';
-  ctx.beginPath(); ctx.moveTo(2,0); ctx.lineTo(-8,-16); ctx.lineTo(-14,0); ctx.closePath(); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(-14,0); ctx.lineTo(-20,-10); ctx.lineTo(-18,0); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='#333';
-  ctx.beginPath(); ctx.ellipse(0,9,4,7,0,0,Math.PI*2); ctx.fill();
+function drawPlaneAt(x, y, angle, preview, scale=1) {
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(angle); ctx.scale(scale, scale);
+  const al = preview ? 0.6 : 1.0;
+
+  // Engine exhaust glow (behind nozzle at -x)
+  if (!preview) {
+    const fl = 0.65 + Math.random() * 0.35;
+    const eg = ctx.createRadialGradient(-32, 0, 0, -36, 0, 20);
+    eg.addColorStop(0, `rgba(125,249,255,${fl * 0.95})`);
+    eg.addColorStop(0.45, `rgba(131,56,236,${fl * 0.5})`);
+    eg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = eg;
+    ctx.beginPath(); ctx.ellipse(-38, 0, 20, 9, 0, 0, Math.PI*2); ctx.fill();
+  }
+
+  // Main delta wing (below fuselage, swept backward)
+  const wg = ctx.createLinearGradient(5, 3, -24, 22);
+  wg.addColorStop(0,    `rgba(0,245,212,${al})`);
+  wg.addColorStop(0.55, `rgba(0,187,249,${al})`);
+  wg.addColorStop(1,    `rgba(67,97,238,${al})`);
+  ctx.fillStyle = wg;
+  ctx.beginPath();
+  ctx.moveTo(5, 4); ctx.lineTo(-22, 22); ctx.lineTo(-26, 17); ctx.lineTo(-8, 4);
+  ctx.closePath(); ctx.fill();
+
+  // Horizontal stabilizer (small tailplane at rear)
+  const tg = ctx.createLinearGradient(-18, 3, -30, 13);
+  tg.addColorStop(0,    `rgba(255,190,11,${al})`);
+  tg.addColorStop(0.45, `rgba(251,86,7,${al})`);
+  tg.addColorStop(1,    `rgba(255,0,110,${al})`);
+  ctx.fillStyle = tg;
+  ctx.beginPath();
+  ctx.moveTo(-18, 4); ctx.lineTo(-28, 14); ctx.lineTo(-30, 11); ctx.lineTo(-22, 4);
+  ctx.closePath(); ctx.fill();
+
+  // Vertical fin (sticks up at tail)
+  const fg = ctx.createLinearGradient(-14, -7, -25, -22);
+  fg.addColorStop(0,    `rgba(128,255,219,${al})`);
+  fg.addColorStop(0.35, `rgba(100,223,223,${al})`);
+  fg.addColorStop(1,    `rgba(94,96,206,${al})`);
+  ctx.fillStyle = fg;
+  ctx.beginPath();
+  ctx.moveTo(-14, -7); ctx.lineTo(-24, -22); ctx.lineTo(-27, -18); ctx.lineTo(-16, -7);
+  ctx.closePath(); ctx.fill();
+
+  // Fuselage (rainbow gradient body)
+  const bg = ctx.createLinearGradient(-28, 0, 28, 0);
+  bg.addColorStop(0,    `rgba(255,77,109,${al})`);
+  bg.addColorStop(0.22, `rgba(255,159,28,${al})`);
+  bg.addColorStop(0.38, `rgba(255,230,109,${al})`);
+  bg.addColorStop(0.58, `rgba(46,196,182,${al})`);
+  bg.addColorStop(0.78, `rgba(58,134,255,${al})`);
+  bg.addColorStop(1,    `rgba(131,56,236,${al})`);
+  ctx.fillStyle = bg;
+  ctx.beginPath(); ctx.ellipse(0, 0, 28, 8, 0, 0, Math.PI*2); ctx.fill();
+  // Top highlight
+  ctx.fillStyle = `rgba(255,255,255,${al * 0.10})`;
+  ctx.beginPath(); ctx.ellipse(2, -3, 22, 4, 0, 0, Math.PI*2); ctx.fill();
+
+  // Nose cone (pointing right, +x)
+  const nc = ctx.createLinearGradient(20, 0, 38, 0);
+  nc.addColorStop(0, `rgba(220,230,255,${al})`);
+  nc.addColorStop(1, `rgba(155,246,255,${al})`);
+  ctx.fillStyle = nc;
+  ctx.beginPath();
+  ctx.moveTo(38, 0); ctx.lineTo(22, -5); ctx.lineTo(22, 5);
+  ctx.closePath(); ctx.fill();
+
+  // Canopy (dome above fuselage, near nose)
+  const cg = ctx.createLinearGradient(8, -16, 20, -8);
+  cg.addColorStop(0, `rgba(125,249,255,${al * 0.85})`);
+  cg.addColorStop(1, `rgba(131,56,236,${al * 0.65})`);
+  ctx.fillStyle = cg;
+  ctx.beginPath(); ctx.ellipse(12, -9, 10, 5, -0.15, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = `rgba(255,255,255,${al * 0.25})`;
+  ctx.beginPath(); ctx.ellipse(10, -12, 4, 2, -0.2, 0, Math.PI*2); ctx.fill();
+
+  // Engine nozzle (at rear, -x)
+  ctx.fillStyle = preview ? `rgba(50,50,50,${al})` : '#2a2a2a';
+  ctx.beginPath(); ctx.ellipse(-26, 0, 8, 5, 0, 0, Math.PI*2); ctx.fill();
+  if (!preview) {
+    const nz = ctx.createRadialGradient(-26, 0, 0, -26, 0, 6);
+    nz.addColorStop(0, 'rgba(125,249,255,0.9)');
+    nz.addColorStop(0.5, 'rgba(131,56,236,0.4)');
+    nz.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = nz;
+    ctx.beginPath(); ctx.ellipse(-26, 0, 6, 4, 0, 0, Math.PI*2); ctx.fill();
+  }
+
   ctx.restore();
 }
 
@@ -722,6 +804,66 @@ function drawExplosions(){
   });
 }
 
+function drawWelcome() {
+  drawBg();
+  // Atmospheric overlay
+  const ov = ctx.createLinearGradient(0, 0, 0, H());
+  ov.addColorStop(0,   'rgba(5,5,20,0.65)');
+  ov.addColorStop(0.5, 'rgba(5,5,20,0.25)');
+  ov.addColorStop(1,   'rgba(5,5,20,0.65)');
+  ctx.fillStyle = ov; ctx.fillRect(0, 0, W(), H());
+
+  const cx = W()/2, now = Date.now();
+  const float = Math.sin(now / 900) * 10;
+  const ps = Math.min(5, Math.max(2, W() / 200));
+  const planeY = H() * 0.52 + float;
+
+  // Wide engine glow trail behind plane
+  const eg = ctx.createRadialGradient(cx - ps*42, planeY, 0, cx - ps*42, planeY, ps*58);
+  eg.addColorStop(0,   'rgba(125,249,255,0.30)');
+  eg.addColorStop(0.5, 'rgba(131,56,236,0.12)');
+  eg.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.fillStyle = eg;
+  ctx.beginPath(); ctx.ellipse(cx - ps*42, planeY, ps*58, ps*24, 0, 0, Math.PI*2); ctx.fill();
+
+  drawPlaneAt(cx, planeY, 0, false, ps);
+
+  // Title
+  const titleSize = Math.max(32, W() * 0.07);
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,200,0,0.85)'; ctx.shadowBlur = 28;
+  ctx.fillStyle = '#ffe566';
+  ctx.font = `bold ${titleSize}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.fillText('שאגת הארי', cx, H() * 0.22);
+  ctx.restore();
+
+  // Subtitle
+  ctx.fillStyle = 'rgba(180,220,255,0.85)';
+  ctx.font = `${Math.max(15, W() * 0.026)}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.fillText("Lion's Roar", cx, H() * 0.22 + titleSize * 0.55 + 8);
+
+  // Flags — top left (Israel) and top right (Iran)
+  const fw = Math.min(75, W() * 0.10);
+  const fh = fw * 0.6;
+  const flagY = H() * 0.06;
+  drawIsraelFlag(W() * 0.05, flagY, fw, fh);
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
+  ctx.strokeRect(W() * 0.05, flagY, fw, fh);
+  drawIranFlag(W() - W() * 0.05 - fw, flagY, fw, fh);
+  ctx.strokeRect(W() - W() * 0.05 - fw, flagY, fw, fh);
+
+  // Flashing start prompt
+  if (Math.floor(now / 600) % 2 === 0) {
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.font = `${Math.max(13, W() * 0.022)}px Arial`;
+    ctx.textAlign = 'center';
+    const mobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    ctx.fillText(mobile ? '👆 לחץ על המסך להתחיל' : '⌨️ הקש על כל מקש להתחיל', cx, H() * 0.82);
+  }
+}
+
 function draw(){
   ctx.clearRect(0,0,W(),H());
   drawBg();
@@ -737,7 +879,11 @@ function draw(){
   drawExplosions();
 }
 
-function loop(){ update(); draw(); requestAnimationFrame(loop); }
+function loop(){
+  if (gameState === 'welcome') { drawWelcome(); }
+  else { update(); draw(); }
+  requestAnimationFrame(loop);
+}
 loop();
 </script>
 </body>
