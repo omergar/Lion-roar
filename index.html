@@ -301,24 +301,30 @@ function drawFlags() {
 function drawHUD() {
   const fw = Math.min(90, W()*0.13);
   const fh = fw*0.6;
-  // Score & lives centered
+  const dataY = fh + 26;
+  const smallFont = `${Math.max(11,W()*0.018)}px Arial`;
+
+  // Score & lives — centered
   ctx.fillStyle='rgba(255,255,255,0.9)';
   ctx.font=`bold ${Math.max(14,W()*0.025)}px Arial`;
   ctx.textAlign='center';
-  ctx.fillText(`ניקוד: ${score}   ${'❤️'.repeat(Math.max(0,lives))}`, W()/2, fh+22);
-  // High score
+  ctx.fillText(`ניקוד: ${score}   ${'❤️'.repeat(Math.max(0,lives))}`, W()/2, dataY);
+
+  // High score — left aligned under Israel flag
   if (highScore > 0) {
-    ctx.fillStyle='rgba(255,220,100,0.7)';
-    ctx.font=`${Math.max(11,W()*0.018)}px Arial`;
-    ctx.fillText(`שיא: ${highScore}`, W()/2, fh+42);
+    ctx.fillStyle='rgba(255,220,100,0.85)';
+    ctx.font=smallFont;
+    ctx.textAlign='left';
+    ctx.fillText(`שיא: ${highScore}`, 12, dataY);
   }
-  // Difficulty indicator
+
+  // Level — right aligned under Iran flag
   const level = Math.floor(diffProgress() * 5) + 1;
   const levelColors = ['#88ff88','#aaff44','#ffee00','#ff8800','#ff2200'];
   ctx.fillStyle = levelColors[Math.min(level-1, 4)];
-  ctx.font=`${Math.max(10,W()*0.016)}px Arial`;
+  ctx.font=smallFont;
   ctx.textAlign='right';
-  ctx.fillText(`רמה ${level}`, W() - 12, fh+22);
+  ctx.fillText(`רמה ${level}`, W() - 12, dataY);
 
   // Instructions bottom
   ctx.fillStyle='rgba(255,255,255,0.4)';
