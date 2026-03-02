@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Missile Defense</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; }
+canvas { display: block; width: 100vw; height: 100vh; }
+#msg { position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%);
+  color: #ffdd00; font-size: 28px; font-weight: bold; text-align: center;
+  text-shadow: 0 0 20px #ff8800; pointer-events: none; opacity: 0; transition: opacity 0.3s; white-space: pre-line; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="msg"></div>
+<script>
+const c = document.getElementById('c');
+const ctx = c.getContext('2d');
+function resize() { c.width = window.innerWidth; c.height = window.innerHeight; }
+resize();
+window.addEventListener('resize', resize);
+
+const W = () => c.width;
+const H = () => c.height;
+const GROUND = () => c.height - 70;
+const BASE = () => ({ x: 70, y: GROUND() - 60 });
+
+let score = 0, lives = 3, gameOver = false;
+let phase = 'aim';
+let plane = null, bomb = null;
+let explosions = [], missiles = [];
+let msgTimer = 0, frameCount = 0, nextSpawn = 120;
+let truck = null;
+let isDragging = false, dragStart = null, dragCurrent = null;
+const MAX_PULL = 70;
+
+// ── Flags (drawn as canvas graphics) ──
+// Iran: green/white/red horizontal + emblem
+// Israel: white/blue with Star of David
+
+function drawIranFlag(x, y, w, h) {
+  // Three horizontal stripes
+  ctx.fillStyle = '#239f40'; ctx.fillRect(x, y, w, h/3);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(x, y+h/3, w, h/3);
+  ctx.fillStyle = '#da0000'; ctx.fillRect(x, y+2*h/3, w, h/3);
+  // Simple emblem (stylized)
+  ctx.fillStyle = '#da0000';
+  ctx.font = `bold ${h*0.45}px serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('☪', x+w/2, y+h/2+h*0.15);
+}
+
+function drawIsraelFlag(x, y, w, h) {
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(x, y, w, h);
+  const stripe = h * 0.2;
+  ctx.fillStyle = '#0038b8';
+  ctx.fillRect(x, y+stripe*0.5, w, stripe);
+  ctx.fillRect(x, y+h-stripe*1.5, w, stripe);
+  // Star of David
+  const cx2 = x+w/2, cy2 = y+h/2, r = h*0.25;
+  ctx.strokeStyle = '#0038b8'; ctx.lineWidth = h*0.06; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  // Triangle up
+  ctx.beginPath();
+  ctx.moveTo(cx2, cy2-r);
+  ctx.lineTo(cx2+r*Math.sin(Math.PI*2/3), cy2-r*Math.cos(Math.PI*2/3));
+  ctx.lineTo(cx2+r*Math.sin(Math.PI*4/3), cy2-r*Math.cos(Math.PI*4/3));
+  ctx.closePath(); ctx.stroke();
+  // Triangle down
+  ctx.beginPath();
+  ctx.moveTo(cx2, cy2+r);
+  ctx.lineTo(cx2+r*Math.sin(Math.PI*2/3), cy2+r*Math.cos(Math.PI*2/3));
+  ctx.lineTo(cx2+r*Math.sin(Math.PI*4/3), cy2+r*Math.cos(Math.PI*4/3));
+  ctx.closePath(); ctx.stroke();
+}
+
+// ── INPUT ──
+function getXY(e) { return { x: e.clientX ?? e.pageX, y: e.clientY ?? e.pageY }; }
+function onDown(e) {
+  if (gameOver) { resetGame(); return; }
+  const pt = getXY(e);
+  if (phase === 'aim') { isDragging = true; dragStart = {...pt}; dragCurrent = {...pt}; }
+  else if (phase === 'flying') dropBomb();
+}
+function onMove(e) { if (isDragging) dragCurrent = getXY(e); }
+function onUp(e) {
+  if (!isDragging) return;
+  isDragging = false;
+  if (phase !== 'aim') return;
+  const dx = dragCurrent.x - dragStart.x;
+  const dy = dragCurrent.y - dragStart.y;
+  if (dx < -10) launchPlane(Math.atan2(dy, -dx));
+  dragStart = null; dragCurrent = null;
+}
+c.addEventListener('mousedown', onDown);
+c.addEventListener('mousemove', onMove);
+c.addEventListener('mouseup', onUp);
+c.addEventListener('touchstart', e=>{e.preventDefault();onDown(e.touches[0]);},{passive:false});
+c.addEventListener('touchmove',  e=>{e.preventDefault();onMove(e.touches[0]);},{passive:false});
+c.addEventListener('touchend',   e=>{e.preventDefault();onUp(e.changedTouches[0]);},{passive:false});
+
+// ── PLANE ──
+function launchPlane(angle) {
+  const a = Math.max(0.1, Math.min(1.48, angle));
+  plane = { x: BASE().x, y: BASE().y, vx: Math.cos(a)*10, vy: -Math.sin(a)*10, hasBomb: true, trail: [] };
+  phase = 'flying';
+}
+function dropBomb() {
+  if (!plane || !plane.hasBomb) return;
+  bomb = { x: plane.x, y: plane.y, vx: plane.vx*0.4, vy: plane.vy*0.3 };
+  plane.hasBomb = false; phase = 'bomb_dropped';
+}
+function resetPlane() { plane = null; bomb = null; phase = 'aim'; }
+
+// ── TRUCK ──
+// Missile pivot = engine end (right side when horizontal)
+// enginePt is fixed on truck, nozzle always stays there.
+// angle: 0 = missile horizontal (nose left, engine right)
+//        90 = missile vertical (nose up, engine at pivot bottom)
+// The missile length L in world px:
+const MISSILE_L = 55;
+
+function spawnTruck() {
+  const stopX = W()*0.55 + Math.random()*W()*0.28;
+  truck = {
+    x: W()+130, y: GROUND()-28,
+    targetX: stopX,
+    state: 'driving', // driving|raising|ready|fired|retreating
+    angle: 0,         // 0=horizontal, 90=vertical (launch)
+    readyTimer: 140 + Math.random()*80,
+    id: Math.random()
+  };
+}
+
+// Engine (pivot) position on truck - fixed point
+function enginePt(t) {
+  return { x: t.x - 5, y: t.y - 8 };
+}
+
+// Nose tip position based on angle
+// angle=0: nose is L to the LEFT of engine  → nose=(ex-L, ey)
+// angle=90: nose is L ABOVE engine          → nose=(ex, ey-L)
+// quarter circle: nose = engine + L*(-cos(a), -sin(a))
+function nosePt(t) {
+  const e = enginePt(t);
+  const a = t.angle * Math.PI / 180;
+  return {
+    x: e.x - Math.cos(a) * MISSILE_L,
+    y: e.y - Math.sin(a) * MISSILE_L
+  };
+}
+
+function fireMissile() {
+  const t = truck;
+  const e = enginePt(t);
+  const n = nosePt(t);
+  // At launch (angle=90), missile goes up-left
+  missiles.push({
+    x: (e.x+n.x)/2, y: (e.y+n.y)/2,
+    vx: -4, vy: -5.5,
+    trail: [], dead: false, truckId: t.id
+  });
+  t.state = 'fired';
+  setTimeout(() => { if (truck && truck.id === t.id) truck.state = 'retreating'; }, 600);
+}
+
+function addExplosion(x, y, big) {
+  explosions.push({ x, y, r: 5, maxR: big?90:35, alpha: 1 });
+}
+function showMsg(txt, color) {
+  const el = document.getElementById('msg');
+  el.textContent = txt; el.style.color = color||'#ffdd00'; el.style.opacity = '1';
+  msgTimer = 100;
+}
+function updateUI() { /* drawn on canvas */ }
+function endGame() { gameOver = true; showMsg('💔 Game Over\nלחץ להתחלה מחדש','#ff4444'); }
+function resetGame() {
+  score=0; lives=3; gameOver=false; plane=null; bomb=null; phase='aim';
+  explosions=[]; missiles=[]; truck=null; frameCount=0; nextSpawn=120;
+  document.getElementById('msg').style.opacity='0';
+}
+
+// ── UPDATE ──
+function update() {
+  if (gameOver) return;
+  frameCount++;
+  if (frameCount >= nextSpawn && !truck) {
+    spawnTruck();
+    nextSpawn = frameCount + 400 + Math.random()*200;
+  }
+
+  if (truck) {
+    const t = truck;
+    if (t.state==='driving') {
+      t.x -= 2.5;
+      if (t.x <= t.targetX) { t.x = t.targetX; t.state = 'raising'; }
+    } else if (t.state==='raising') {
+      t.angle += 1.0;
+      if (t.angle >= 90) { t.angle = 90; t.state = 'ready'; }
+    } else if (t.state==='ready') {
+      t.readyTimer--;
+      if (t.readyTimer <= 0) fireMissile();
+    } else if (t.state==='retreating') {
+      t.x += 3;
+      if (t.x > W()+200) truck = null;
+    }
+  }
+
+  missiles.forEach(m => {
+    m.trail.push({x:m.x,y:m.y});
+    if (m.trail.length>28) m.trail.shift();
+    m.vy += 0.07; m.vx -= 0.03;
+    m.x += m.vx; m.y += m.vy;
+    if (m.x < 0) {
+      addExplosion(20, m.y, true);
+      lives--;
+      showMsg('💥 הטיל פגע!','#ff4444');
+      m.dead = true;
+      if (lives<=0) endGame();
+    }
+    if (m.y > H()+50) m.dead = true;
+  });
+  missiles = missiles.filter(m=>!m.dead);
+
+  if (plane) {
+    plane.trail.push({x:plane.x,y:plane.y});
+    if (plane.trail.length>35) plane.trail.shift();
+    plane.vy += 0.04; plane.x += plane.vx; plane.y += plane.vy;
+    if (plane.x>W()+100||plane.y>H()+100) resetPlane();
+  }
+
+  if (bomb) {
+    bomb.vy += 0.35; bomb.x += bomb.vx; bomb.y += bomb.vy;
+    if (bomb.y >= GROUND()) {
+      let hit = false;
+      if (truck && Math.abs(bomb.x - truck.x) < 70 &&
+          (truck.state==='raising'||truck.state==='ready'||truck.state==='fired')) {
+        addExplosion(truck.x, truck.y, true);
+        missiles = missiles.filter(m=>m.truckId!==truck.id);
+        truck = null; score++;
+        showMsg('🎯 פגיעה!','#00ff88');
+        hit = true;
+      }
+      if (!hit) addExplosion(bomb.x, GROUND(), false);
+      bomb = null; resetPlane();
+    }
+  }
+
+  explosions.forEach(e=>{ e.r+=(e.maxR-e.r)*0.18; e.alpha-=0.025; });
+  explosions = explosions.filter(e=>e.alpha>0);
+  if (msgTimer>0 && --msgTimer===0) document.getElementById('msg').style.opacity='0';
+}
+
+// ── DRAW ──
+function drawBg() {
+  const g = ctx.createLinearGradient(0,0,0,GROUND());
+  g.addColorStop(0,'#050510'); g.addColorStop(1,'#0f1f0f');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W(),H());
+  ctx.fillStyle='rgba(255,255,255,0.55)';
+  for(let i=0;i<100;i++) ctx.fillRect((i*173.3)%W(),(i*97.7)%(GROUND()*0.75),1.5,1.5);
+  ctx.fillStyle='#fffde0'; ctx.beginPath(); ctx.arc(W()*0.85,80,28,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#0a1020'; ctx.beginPath(); ctx.arc(W()*0.85+10,74,22,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1e3010'; ctx.fillRect(0,GROUND(),W(),H()-GROUND());
+  ctx.fillStyle='#2a4018'; ctx.fillRect(0,GROUND(),W(),10);
+}
+
+function drawFlags() {
+  const fw = Math.min(90, W()*0.13);
+  const fh = fw * 0.6;
+  const margin = 10;
+  const topY = 8;
+
+  // Title centered at top
+  ctx.fillStyle = 'rgba(255,220,80,0.95)';
+  ctx.font = `bold ${Math.max(16, W()*0.028)}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.fillText('שאגת הארי', W()/2, topY + fh*0.65);
+
+  // Israel — left
+  drawIsraelFlag(margin, topY, fw, fh);
+  ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=1;
+  ctx.strokeRect(margin, topY, fw, fh);
+  // Iran — right
+  drawIranFlag(W()-margin-fw, topY, fw, fh);
+  ctx.strokeRect(W()-margin-fw, topY, fw, fh);
+}
+
+function drawHUD() {
+  const fw = Math.min(90, W()*0.13);
+  const fh = fw*0.6;
+  // Score & lives centered
+  ctx.fillStyle='rgba(255,255,255,0.9)';
+  ctx.font=`bold ${Math.max(14,W()*0.025)}px Arial`;
+  ctx.textAlign='center';
+  ctx.fillText(`ניקוד: ${score}   ${'❤️'.repeat(Math.max(0,lives))}`, W()/2, fh+22);
+
+  // Instructions bottom
+  ctx.fillStyle='rgba(255,255,255,0.4)';
+  ctx.font=`${Math.max(11,W()*0.019)}px Arial`;
+  ctx.fillText('גרור את הרוגטקה שמאלה ושחרר • לחץ שוב בטיסה להטיל פצצה', W()/2, H()-15);
+
+  if (phase==='flying') {
+    ctx.fillStyle='rgba(255,255,50,0.95)';
+    ctx.font=`bold ${Math.max(16,W()*0.032)}px Arial`;
+    ctx.fillText('💣 לחץ להטיל פצצה!', W()/2, Math.min(90,W()*0.13)*0.6+50);
+  }
+}
+
+function drawSlingshot() {
+  const bx=BASE().x, by=BASE().y;
+  ctx.strokeStyle='#7a3a0a'; ctx.lineWidth=9; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(bx-14,by+35); ctx.lineTo(bx-20,by-15); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(bx+14,by+35); ctx.lineTo(bx+20,by-15); ctx.stroke();
+  ctx.lineWidth=14;
+  ctx.beginPath(); ctx.moveTo(bx,by+35); ctx.lineTo(bx,by+65); ctx.stroke();
+
+  let pullX=bx, pullY=by;
+  if (isDragging && dragStart && dragCurrent) {
+    let dx=dragCurrent.x-dragStart.x, dy=dragCurrent.y-dragStart.y;
+    const dist=Math.sqrt(dx*dx+dy*dy);
+    if(dist>MAX_PULL){dx=dx/dist*MAX_PULL;dy=dy/dist*MAX_PULL;}
+    pullX=bx+Math.min(0,dx); pullY=by+dy;
+    ctx.strokeStyle='#cc9944'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(bx-20,by-15); ctx.lineTo(pullX,pullY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(bx+20,by-15); ctx.lineTo(pullX,pullY); ctx.stroke();
+    drawPlaneAt(pullX,pullY,0,true);
+    const adx=pullX-bx, ady=pullY-by;
+    const ang=Math.atan2(ady,-adx);
+    if(ang>0&&ang<Math.PI){
+      ctx.strokeStyle='rgba(100,200,255,0.3)'; ctx.lineWidth=1.5; ctx.setLineDash([5,8]);
+      ctx.beginPath();
+      let px=bx,py=by,pvx=Math.cos(ang)*10,pvy=-Math.sin(ang)*10;
+      ctx.moveTo(px,py);
+      for(let i=0;i<120;i++){pvy+=0.04;px+=pvx;py+=pvy;ctx.lineTo(px,py);if(px>W()||py>GROUND())break;}
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+  } else if(phase==='aim'){
+    ctx.strokeStyle='#cc9944'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(bx-20,by-15); ctx.lineTo(bx,by); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(bx+20,by-15); ctx.lineTo(bx,by); ctx.stroke();
+    drawPlaneAt(bx,by,0,false);
+  }
+}
+
+function drawPlaneAt(x,y,angle,preview){
+  ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
+  ctx.fillStyle=preview?'rgba(80,150,255,0.7)':'#5599ff';
+  ctx.beginPath(); ctx.ellipse(0,0,18,7,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#88bbff';
+  ctx.beginPath(); ctx.moveTo(18,0); ctx.lineTo(26,0); ctx.lineTo(18,4); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#2255bb';
+  ctx.beginPath(); ctx.moveTo(2,0); ctx.lineTo(-8,-16); ctx.lineTo(-14,0); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-14,0); ctx.lineTo(-20,-10); ctx.lineTo(-18,0); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#333';
+  ctx.beginPath(); ctx.ellipse(0,9,4,7,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawPlane(){
+  if(!plane) return;
+  plane.trail.forEach((p,i)=>{
+    ctx.fillStyle=`rgba(80,140,255,${i/plane.trail.length*0.35})`;
+    ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fill();
+  });
+  drawPlaneAt(plane.x,plane.y,Math.atan2(plane.vy,plane.vx),false);
+}
+
+function drawBomb(){
+  if(!bomb) return;
+  ctx.save(); ctx.translate(bomb.x,bomb.y); ctx.rotate(Math.atan2(bomb.vy,bomb.vx)+Math.PI/2);
+  ctx.fillStyle='#111'; ctx.beginPath(); ctx.ellipse(0,0,5,9,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#ff5500'; ctx.beginPath(); ctx.moveTo(0,-9); ctx.lineTo(-4,-15); ctx.lineTo(4,-15); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+function drawTruck(){
+  if(!truck) return;
+  const t=truck;
+  const x=t.x, y=t.y;
+
+  // Flatbed
+  ctx.fillStyle='#445544'; ctx.fillRect(x-55,y,110,38);
+  // Cab (right side — truck drives left, so cab is at right/front)
+  ctx.fillStyle='#556655'; ctx.fillRect(x+35,y-18,30,30);
+  ctx.fillStyle='#aaddff'; ctx.fillRect(x+37,y-15,24,13);
+  // Wheels
+  [x-35,x-5,x+40].forEach(wx=>{
+    ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(wx,y+38,13,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#666'; ctx.lineWidth=3; ctx.stroke();
+  });
+  // Driver
+  ctx.save(); ctx.translate(x+50,y-16);
+  ctx.fillStyle='#2a2a2a'; ctx.fillRect(-6,-6,12,14);
+  ctx.fillStyle='#c8a070'; ctx.beginPath(); ctx.arc(0,-12,6,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(0,-15,7,Math.PI,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // ── MISSILE ──
+  // Engine (pivot) is fixed on truck. Nose sweeps quarter circle.
+  // angle=0: horizontal, nose left  → nosePt = (ex-L, ey)
+  // angle=90: vertical, nose up     → nosePt = (ex, ey-L)
+  if(t.state==='driving'||t.state==='raising'||t.state==='ready'){
+    const e=enginePt(t);
+    const n=nosePt(t);
+
+    // bodyAngle: from engine→nose (so nose is "forward"/left visually)
+    const dx=n.x-e.x, dy=n.y-e.y;
+    const bodyAngle=Math.atan2(dy,dx);
+    const midX=(e.x+n.x)/2, midY=(e.y+n.y)/2;
+
+    ctx.save(); ctx.translate(midX,midY); ctx.rotate(bodyAngle);
+    // body
+    ctx.fillStyle='#cc1100';
+    ctx.beginPath(); ctx.ellipse(0,0,MISSILE_L/2,7,0,0,Math.PI*2); ctx.fill();
+    // Nose cone — sleek pointed tip outward
+    ctx.fillStyle='#dd6600';
+    ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-6); ctx.lineTo(MISSILE_L/2,6); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='rgba(255,200,80,0.7)';
+    ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-3); ctx.lineTo(MISSILE_L/2+8,0); ctx.closePath(); ctx.fill();
+    // Engine nozzle at -MISSILE_L/2 (engine side)
+    ctx.fillStyle='#333';
+    ctx.beginPath(); ctx.ellipse(-MISSILE_L/2-4,0,5,9,0,0,Math.PI*2); ctx.fill();
+    // Fins near engine
+    ctx.fillStyle='#882200';
+    [[-6,-8],[-6,8]].forEach(([fx,fy])=>{
+      ctx.beginPath(); ctx.moveTo(-MISSILE_L/2+4,0); ctx.lineTo(-MISSILE_L/2+fx,fy); ctx.lineTo(-MISSILE_L/2-2,0); ctx.closePath(); ctx.fill();
+    });
+    ctx.restore();
+  }
+}
+
+function drawMissiles(){
+  missiles.forEach(m=>{
+    m.trail.forEach((p,i)=>{
+      ctx.fillStyle=`rgba(255,120,0,${i/m.trail.length*0.5})`;
+      ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fill();
+    });
+    ctx.save(); ctx.translate(m.x,m.y);
+    ctx.rotate(Math.atan2(m.vy,m.vx));
+    // Consistent convention: nose is on the +X side, engine on -X (matches drawTruck)
+    ctx.fillStyle='#cc1100';
+    ctx.beginPath(); ctx.ellipse(0,0,MISSILE_L/2,7,0,0,Math.PI*2); ctx.fill();
+    // Nose cone — tip points forward (+X = direction of travel)
+    ctx.fillStyle='#dd6600';
+    ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-6); ctx.lineTo(MISSILE_L/2,6); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='rgba(255,200,80,0.7)';
+    ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-3); ctx.lineTo(MISSILE_L/2+8,0); ctx.closePath(); ctx.fill();
+    // Engine exhaust plume — tapered cone pointing backward (-X)
+    const fl=Math.random();
+    ctx.fillStyle=`rgba(255,${100+Math.floor(fl*100)},0,0.85)`;
+    ctx.beginPath(); ctx.moveTo(-MISSILE_L/2,-6); ctx.lineTo(-MISSILE_L/2,6); ctx.lineTo(-MISSILE_L/2-18-fl*8,0); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='rgba(255,240,120,0.9)';
+    ctx.beginPath(); ctx.moveTo(-MISSILE_L/2,-2.5); ctx.lineTo(-MISSILE_L/2,2.5); ctx.lineTo(-MISSILE_L/2-10,0); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  });
+}
+
+function drawExplosions(){
+  explosions.forEach(e=>{
+    const g=ctx.createRadialGradient(e.x,e.y,0,e.x,e.y,e.r);
+    g.addColorStop(0,`rgba(255,255,180,${e.alpha})`);
+    g.addColorStop(0.4,`rgba(255,130,0,${e.alpha*0.85})`);
+    g.addColorStop(1,'rgba(100,0,0,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,Math.PI*2); ctx.fill();
+  });
+}
+
+function draw(){
+  ctx.clearRect(0,0,W(),H());
+  drawBg();
+  drawFlags();
+  drawHUD();
+  drawSlingshot();
+  drawTruck();
+  drawMissiles();
+  drawPlane();
+  drawBomb();
+  drawExplosions();
+}
+
+function loop(){ update(); draw(); requestAnimationFrame(loop); }
+loop();
+</script>
+</body>
+</html>
