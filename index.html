@@ -25,7 +25,7 @@ window.addEventListener('resize', resize);
 
 const W = () => c.width;
 const H = () => c.height;
-const GROUND = () => c.height - 130;
+const GROUND = () => c.height - (c.width > c.height ? 85 : 130);
 const BASE = () => ({ x: 70, y: GROUND() - 60 });
 
 let score = 0, lives = 3, gameOver = false;
