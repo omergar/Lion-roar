@@ -155,11 +155,15 @@ function spawnHole() {
 }
 
 function fireGroundMissile(h) {
-  const mSpeed = 1 + diffProgress() * 0.6;
+  const mSpeed = 0.65 + diffProgress() * 0.35;
+  // Launch upward, then after ~20 frames steer to low-altitude cruise toward player
   missiles.push({
     x: h.x, y: GROUND() - 5,
-    vx: (Math.random() - 0.5) * 0.4,
-    vy: -10 * mSpeed,
+    vx: (Math.random() - 0.55) * 0.5,
+    vy: -5.5 * mSpeed,
+    g: 0.09,
+    steerTimer: 20,
+    aimX: BASE().x + (Math.random() * 55 - 5),
     trail: [], dead: false, truckId: h.id,
     fromGround: true
   });
@@ -199,11 +203,20 @@ function fireMissile() {
   const t = truck;
   const e = enginePt(t);
   const n = nosePt(t);
-  // At launch (angle=90), missile goes up-left
-  const mSpeed = 1 + diffProgress() * 0.6; // 1.0x → 1.6x speed multiplier
+  const mSpeed = 0.65 + diffProgress() * 0.35;
+  const startX = (e.x + n.x) / 2;
+  const startY = (e.y + n.y) / 2;
+  const aimX = BASE().x + (Math.random() * 60 - 15);
+  const vy0 = -4.5 * mSpeed;
+  const g = 0.09;
+  // Solve time-to-land accounting for starting above ground
+  const h0 = GROUND() - startY; // height above ground at launch
+  const tLand = (-vy0 + Math.sqrt(vy0 * vy0 + 2 * g * h0)) / g;
   missiles.push({
-    x: (e.x+n.x)/2, y: (e.y+n.y)/2,
-    vx: -4 * mSpeed, vy: -5.5 * mSpeed,
+    x: startX, y: startY,
+    vx: (aimX - startX) / tLand,
+    vy: vy0,
+    g,
     trail: [], dead: false, truckId: t.id
   });
   t.state = 'fired';
@@ -279,23 +292,32 @@ function update() {
   missiles.forEach(m => {
     m.trail.push({x:m.x,y:m.y});
     if (m.trail.length>28) m.trail.shift();
-    m.vy += 0.07; m.vx -= 0.03;
+    m.vy += (m.g ?? 0.07);
     m.x += m.vx; m.y += m.vy;
-    if (m.fromGround && m.y < -80) {
-      addExplosion(BASE().x + 30, BASE().y - 50, true);
-      lives--;
-      showMsg('💥 טיל מהאדמה פגע!','#ff4444');
-      m.dead = true;
-      if (lives<=0) endGame();
+
+    // Ground-missile guidance: after brief upward phase steer to low cruise
+    if (m.steerTimer > 0) {
+      m.steerTimer--;
+      if (m.steerTimer === 0) {
+        const dist = m.aimX - m.x;
+        m.vx = dist / 78; // cruise ~78 frames to landing
+        m.vy = -0.5;
+        m.g = 0.03;
+      }
     }
-    if (!m.fromGround && m.x < 0) {
-      addExplosion(20, m.y, true);
-      lives--;
-      showMsg('💥 הטיל פגע!','#ff4444');
+
+    // Primary hit: missile reaches the ground near the player
+    if (!m.dead && m.y >= GROUND() - 8) {
+      if (Math.abs(m.x - BASE().x) < 90) {
+        addExplosion(m.x, GROUND(), true);
+        lives--;
+        showMsg(m.fromGround ? '💥 טיל מהאדמה פגע!' : '💥 הטיל פגע!', '#ff4444');
+        if (lives <= 0) endGame();
+      }
       m.dead = true;
-      if (lives<=0) endGame();
     }
-    if (m.y > H()+50) m.dead = true;
+    // Safety: exits screen without hitting
+    if (!m.dead && (m.y > H()+50 || m.x < -60 || m.x > W()+60)) m.dead = true;
   });
   missiles = missiles.filter(m=>!m.dead);
 
@@ -337,7 +359,7 @@ function update() {
         hole.closeTimer = 100;
         score++;
         addExplosion(hole.x, GROUND(), false);
-        showMsg('🕳️ חסמת את הבאר!','#00ff88');
+        showMsg('🕳️ חסמת את בור השיגור!','#00ff88');
         hit = true;
       }
       if (!hit && truck && Math.abs(bomb.x - truck.x) < 70 &&
