@@ -34,7 +34,7 @@ let phase = 'aim';
 let plane = null, bomb = null;
 let explosions = [], missiles = [];
 let msgTimer = 0, frameCount = 0, nextSpawn = 120;
-let truck = null;
+let truck = null, hole = null;
 let isDragging = false, dragStart = null, dragCurrent = null;
 const MAX_PULL = 70;
 
@@ -123,6 +123,28 @@ function resetPlane() { plane = null; bomb = null; phase = 'aim'; }
 // The missile length L in world px:
 const MISSILE_L = 55;
 
+function spawnHole() {
+  const timer = Math.max(30, Math.round(120 - diffProgress() * 90));
+  hole = {
+    x: W()*0.38 + Math.random()*W()*0.45,
+    state: 'active', // active|blocked|fired
+    timer: timer, maxTimer: timer,
+    closeTimer: 0,
+    id: Math.random()
+  };
+}
+
+function fireGroundMissile(h) {
+  const mSpeed = 1 + diffProgress() * 0.6;
+  missiles.push({
+    x: h.x, y: GROUND() - 5,
+    vx: (Math.random() - 0.5) * 0.4,
+    vy: -10 * mSpeed,
+    trail: [], dead: false, truckId: h.id,
+    fromGround: true
+  });
+}
+
 function spawnTruck() {
   const stopX = W()*0.55 + Math.random()*W()*0.28;
   truck = {
@@ -184,7 +206,7 @@ function endGame() { saveHighScore(); gameOver = true; showMsg('💔 Game Over\n
 function resetGame() {
   saveHighScore();
   score=0; lives=3; gameOver=false; plane=null; bomb=null; phase='aim';
-  explosions=[]; missiles=[]; truck=null; frameCount=0; nextSpawn=120;
+  explosions=[]; missiles=[]; truck=null; hole=null; frameCount=0; nextSpawn=120;
   document.getElementById('msg').style.opacity='0';
 }
 
@@ -196,10 +218,25 @@ function diffProgress() { return Math.min(score / 20, 1); }
 function update() {
   if (gameOver) return;
   frameCount++;
-  if (frameCount >= nextSpawn && !truck) {
-    spawnTruck();
+  if (frameCount >= nextSpawn && !truck && !hole) {
+    if (Math.random() < 0.35) spawnHole(); else spawnTruck();
     const spawnGap = 400 - diffProgress() * 200; // 400 → 200 frames
     nextSpawn = frameCount + Math.max(spawnGap, 180) + Math.random() * 100;
+  }
+
+  if (hole) {
+    if (hole.state === 'active') {
+      hole.timer--;
+      if (hole.timer <= 0) {
+        fireGroundMissile(hole);
+        hole.state = 'fired';
+        hole.closeTimer = 130;
+        showMsg('🚀 טיל אדמה!', '#ff4444');
+      }
+    } else {
+      hole.closeTimer--;
+      if (hole.closeTimer <= 0) hole = null;
+    }
   }
 
   if (truck) {
@@ -224,7 +261,14 @@ function update() {
     if (m.trail.length>28) m.trail.shift();
     m.vy += 0.07; m.vx -= 0.03;
     m.x += m.vx; m.y += m.vy;
-    if (m.x < 0) {
+    if (m.fromGround && m.y < -80) {
+      addExplosion(BASE().x + 30, BASE().y - 50, true);
+      lives--;
+      showMsg('💥 טיל מהאדמה פגע!','#ff4444');
+      m.dead = true;
+      if (lives<=0) endGame();
+    }
+    if (!m.fromGround && m.x < 0) {
       addExplosion(20, m.y, true);
       lives--;
       showMsg('💥 הטיל פגע!','#ff4444');
@@ -246,7 +290,15 @@ function update() {
     bomb.vy += 0.35; bomb.x += bomb.vx; bomb.y += bomb.vy;
     if (bomb.y >= GROUND()) {
       let hit = false;
-      if (truck && Math.abs(bomb.x - truck.x) < 70 &&
+      if (hole && hole.state === 'active' && Math.abs(bomb.x - hole.x) < 44) {
+        hole.state = 'blocked';
+        hole.closeTimer = 100;
+        score++;
+        addExplosion(hole.x, GROUND(), false);
+        showMsg('🕳️ חסמת את הבאר!','#00ff88');
+        hit = true;
+      }
+      if (!hit && truck && Math.abs(bomb.x - truck.x) < 70 &&
           (truck.state==='raising'||truck.state==='ready'||truck.state==='fired')) {
         addExplosion(truck.x, truck.y, true);
         missiles = missiles.filter(m=>m.truckId!==truck.id);
@@ -481,6 +533,76 @@ function drawMissiles(){
   });
 }
 
+function drawHole() {
+  if (!hole) return;
+  const h = hole;
+  const gx = h.x, gy = GROUND();
+  const hW = 38, hH = 16;
+
+  // Glow ring when active (urgency ramps from yellow → red)
+  if (h.state === 'active') {
+    const pct = h.timer / h.maxTimer;
+    const pulse = 0.55 + Math.sin(frameCount * 0.3) * 0.45;
+    const gG = Math.round(pct * 200);
+    ctx.save();
+    ctx.shadowBlur = 18 + (1 - pct) * 22;
+    ctx.shadowColor = `rgb(255,${gG},0)`;
+    ctx.strokeStyle = `rgba(255,${gG},0,${(0.55 + (1-pct)*0.45) * pulse})`;
+    ctx.lineWidth = 3 + (1-pct) * 3;
+    ctx.beginPath();
+    ctx.ellipse(gx, gy+7, hW+10, hH+7, 0, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+
+    // Countdown bar above hole
+    const barW = 68;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(gx - barW/2, gy - 22, barW, 7);
+    ctx.fillStyle = pct > 0.55 ? '#00ee66' : pct > 0.28 ? '#ffaa00' : '#ff2200';
+    ctx.fillRect(gx - barW/2, gy - 22, barW * pct, 7);
+
+    // Warning icon
+    const iconAlpha = 0.6 + pulse * 0.4;
+    ctx.fillStyle = `rgba(255,180,0,${iconAlpha})`;
+    ctx.font = `bold ${Math.max(13, W()*0.021)}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.fillText('⚠', gx, gy - 27);
+  }
+
+  // Ground patch (cover existing ground strip so hole is flush)
+  ctx.fillStyle = '#1e3010';
+  ctx.fillRect(gx - hW - 10, gy, (hW + 10)*2, 22);
+
+  // Dark hole oval
+  ctx.fillStyle = '#06060c';
+  ctx.beginPath();
+  ctx.ellipse(gx, gy+7, hW, hH, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Rim / edge
+  ctx.strokeStyle = h.state === 'blocked' ? '#22aa44' : '#7a4012';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.ellipse(gx, gy+7, hW, hH, 0, 0, Math.PI*2);
+  ctx.stroke();
+
+  // Dirt clumps around rim
+  ctx.fillStyle = '#3a4e18';
+  [[-hW*0.75, -5], [hW*0.75, -5], [-hW*0.38, -9], [hW*0.38, -9]].forEach(([dx, dy]) => {
+    ctx.beginPath(); ctx.arc(gx+dx, gy+dy, 4, 0, Math.PI*2); ctx.fill();
+  });
+
+  if (h.state === 'blocked') {
+    // Bomb wedged in hole
+    ctx.fillStyle = '#222';
+    ctx.beginPath(); ctx.ellipse(gx, gy+7, 11, 9, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#00ff88';
+    ctx.font = `bold ${Math.max(13, W()*0.021)}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.fillText('✓', gx, gy - 10);
+  }
+}
+
 function drawExplosions(){
   explosions.forEach(e=>{
     const g=ctx.createRadialGradient(e.x,e.y,0,e.x,e.y,e.r);
@@ -498,6 +620,7 @@ function draw(){
   drawHUD();
   drawSlingshot();
   drawTruck();
+  drawHole();
   drawMissiles();
   drawPlane();
   drawBomb();
