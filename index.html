@@ -301,9 +301,16 @@ function update() {
       if (!hit && truck && Math.abs(bomb.x - truck.x) < 70 &&
           (truck.state==='raising'||truck.state==='ready'||truck.state==='fired')) {
         addExplosion(truck.x, truck.y, true);
-        missiles = missiles.filter(m=>m.truckId!==truck.id);
-        truck = null; score++;
-        showMsg('🎯 פגיעה!','#00ff88');
+        if (truck.state === 'fired') {
+          // Missile already in the air — destroy truck but no point, missile keeps flying
+          truck = null;
+          showMsg('💨 המשגר הושמד!','#ffaa00');
+        } else {
+          // Missile not yet launched — full hit
+          missiles = missiles.filter(m=>m.truckId!==truck.id);
+          truck = null; score++;
+          showMsg('🎯 פגיעה!','#00ff88');
+        }
         hit = true;
       }
       if (!hit) addExplosion(bomb.x, GROUND(), false);
