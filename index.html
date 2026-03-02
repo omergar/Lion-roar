@@ -31,11 +31,12 @@ const BASE = () => ({ x: 70, y: GROUND() - 60 });
 let score = 0, lives = 3, gameOver = false;
 let highScore = parseInt(localStorage.getItem('lionRoarHighScore') || '0');
 let phase = 'aim';
-let plane = null, bomb = null;
+let plane = null, bomb = null, amm = null;
 let explosions = [], missiles = [];
 let msgTimer = 0, frameCount = 0, nextSpawn = 120;
 let truck = null, hole = null;
 let isDragging = false, dragStart = null, dragCurrent = null;
+let currentTool = 'plane'; // 'plane' | 'amm'
 const MAX_PULL = 70;
 
 // ── Flags (drawn as canvas graphics) ──
@@ -102,18 +103,34 @@ c.addEventListener('touchstart', e=>{e.preventDefault();onDown(e.touches[0]);},{
 c.addEventListener('touchmove',  e=>{e.preventDefault();onMove(e.touches[0]);},{passive:false});
 c.addEventListener('touchend',   e=>{e.preventDefault();onUp(e.changedTouches[0]);},{passive:false});
 
+// ── TOOL SELECTION ──
+function pickTool() {
+  // Offer AMM when enemy missiles are airborne (60% chance), else occasionally (20%)
+  if (missiles.length > 0 && Math.random() < 0.6) return 'amm';
+  if (Math.random() < 0.2) return 'amm';
+  return 'plane';
+}
+function resetTool() {
+  plane = null; bomb = null; amm = null; phase = 'aim';
+  currentTool = pickTool();
+}
+
 // ── PLANE ──
 function launchPlane(angle) {
   const a = Math.max(0.1, Math.min(1.48, angle));
-  plane = { x: BASE().x, y: BASE().y, vx: Math.cos(a)*10, vy: -Math.sin(a)*10, hasBomb: true, trail: [] };
-  phase = 'flying';
+  if (currentTool === 'amm') {
+    amm = { x: BASE().x, y: BASE().y, vx: Math.cos(a)*15, vy: -Math.sin(a)*15, trail: [] };
+    phase = 'amm_flying';
+  } else {
+    plane = { x: BASE().x, y: BASE().y, vx: Math.cos(a)*10, vy: -Math.sin(a)*10, hasBomb: true, trail: [] };
+    phase = 'flying';
+  }
 }
 function dropBomb() {
   if (!plane || !plane.hasBomb) return;
   bomb = { x: plane.x, y: plane.y, vx: plane.vx*0.4, vy: plane.vy*0.3 };
   plane.hasBomb = false; phase = 'bomb_dropped';
 }
-function resetPlane() { plane = null; bomb = null; phase = 'aim'; }
 
 // ── TRUCK ──
 // Missile pivot = engine end (right side when horizontal)
@@ -124,7 +141,7 @@ function resetPlane() { plane = null; bomb = null; phase = 'aim'; }
 const MISSILE_L = 55;
 
 function spawnHole() {
-  const timer = Math.max(30, Math.round(120 - diffProgress() * 90));
+  const timer = Math.max(90, Math.round(240 - diffProgress() * 150)); // 4 s → 1.5 s
   hole = {
     x: W()*0.38 + Math.random()*W()*0.45,
     state: 'active', // active|blocked|fired
@@ -205,7 +222,7 @@ function saveHighScore() {
 function endGame() { saveHighScore(); gameOver = true; showMsg('💔 Game Over\nלחץ להתחלה מחדש','#ff4444'); }
 function resetGame() {
   saveHighScore();
-  score=0; lives=3; gameOver=false; plane=null; bomb=null; phase='aim';
+  score=0; lives=3; gameOver=false; plane=null; bomb=null; amm=null; phase='aim'; currentTool='plane';
   explosions=[]; missiles=[]; truck=null; hole=null; frameCount=0; nextSpawn=120;
   document.getElementById('msg').style.opacity='0';
 }
@@ -283,7 +300,29 @@ function update() {
     plane.trail.push({x:plane.x,y:plane.y});
     if (plane.trail.length>35) plane.trail.shift();
     plane.vy += 0.04; plane.x += plane.vx; plane.y += plane.vy;
-    if (plane.x>W()+100||plane.y>H()+100) resetPlane();
+    if (plane.x>W()+100||plane.y>H()+100) resetTool();
+  }
+
+  if (amm) {
+    amm.trail.push({x:amm.x,y:amm.y});
+    if (amm.trail.length>20) amm.trail.shift();
+    amm.vy += 0.015; amm.x += amm.vx; amm.y += amm.vy;
+    // Collision with enemy missiles
+    let intercepted = false;
+    missiles = missiles.filter(m => {
+      const dx=amm.x-m.x, dy=amm.y-m.y;
+      if (Math.sqrt(dx*dx+dy*dy) < 40) {
+        addExplosion(m.x, m.y, true); score++;
+        showMsg('💥 יירוט!','#00ffff');
+        intercepted = true; return false;
+      }
+      return true;
+    });
+    if (intercepted) { amm = null; resetTool(); }
+    else if (amm && (amm.x>W()+50||amm.x<-50||amm.y<-100||amm.y>GROUND())) {
+      if (amm.y >= GROUND()) addExplosion(amm.x, GROUND(), false);
+      amm = null; resetTool();
+    }
   }
 
   if (bomb) {
@@ -302,11 +341,9 @@ function update() {
           (truck.state==='raising'||truck.state==='ready'||truck.state==='fired')) {
         addExplosion(truck.x, truck.y, true);
         if (truck.state === 'fired') {
-          // Missile already in the air — destroy truck but no point, missile keeps flying
           truck = null;
           showMsg('💨 המשגר הושמד!','#ffaa00');
         } else {
-          // Missile not yet launched — full hit
           missiles = missiles.filter(m=>m.truckId!==truck.id);
           truck = null; score++;
           showMsg('🎯 פגיעה!','#00ff88');
@@ -314,7 +351,7 @@ function update() {
         hit = true;
       }
       if (!hit) addExplosion(bomb.x, GROUND(), false);
-      bomb = null; resetPlane();
+      bomb = null; resetTool();
     }
   }
 
@@ -385,15 +422,26 @@ function drawHUD() {
   ctx.textAlign='right';
   ctx.fillText(`רמה ${level}`, W() - 12, dataY);
 
-  // Instructions bottom
-  ctx.fillStyle='rgba(255,255,255,0.4)';
+  // Instructions bottom — changes based on active tool
+  ctx.textAlign='center';
   ctx.font=`${Math.max(11,W()*0.019)}px Arial`;
-  ctx.fillText('גרור את הרוגטקה שמאלה ושחרר • לחץ שוב בטיסה להטיל פצצה', W()/2, GROUND()+58);
+  if (phase==='aim' && currentTool==='amm') {
+    ctx.fillStyle='rgba(0,220,255,0.7)';
+    ctx.fillText('🎯 יירוט! כוון אל הטיל ושחרר', W()/2, GROUND()+58);
+  } else {
+    ctx.fillStyle='rgba(255,255,255,0.4)';
+    ctx.fillText('גרור את הרוגטקה שמאלה ושחרר • לחץ שוב בטיסה להטיל פצצה', W()/2, GROUND()+58);
+  }
 
   if (phase==='flying') {
     ctx.fillStyle='rgba(255,255,50,0.95)';
     ctx.font=`bold ${Math.max(16,W()*0.032)}px Arial`;
     ctx.fillText('💣 לחץ להטיל פצצה!', W()/2, Math.min(90,W()*0.13)*0.6+65);
+  }
+  if (phase==='amm_flying') {
+    ctx.fillStyle='rgba(0,220,255,0.9)';
+    ctx.font=`bold ${Math.max(14,W()*0.026)}px Arial`;
+    ctx.fillText('🚀 טיל יירוט בדרך...', W()/2, Math.min(90,W()*0.13)*0.6+65);
   }
 }
 
@@ -405,31 +453,40 @@ function drawSlingshot() {
   ctx.lineWidth=14;
   ctx.beginPath(); ctx.moveTo(bx,by+35); ctx.lineTo(bx,by+65); ctx.stroke();
 
+  const isAMM = currentTool === 'amm';
   let pullX=bx, pullY=by;
   if (isDragging && dragStart && dragCurrent) {
     let dx=dragCurrent.x-dragStart.x, dy=dragCurrent.y-dragStart.y;
     const dist=Math.sqrt(dx*dx+dy*dy);
     if(dist>MAX_PULL){dx=dx/dist*MAX_PULL;dy=dy/dist*MAX_PULL;}
     pullX=bx+Math.min(0,dx); pullY=by+dy;
-    ctx.strokeStyle='#cc9944'; ctx.lineWidth=3;
+    ctx.strokeStyle=isAMM?'#00ccff':'#cc9944'; ctx.lineWidth=3;
     ctx.beginPath(); ctx.moveTo(bx-20,by-15); ctx.lineTo(pullX,pullY); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(bx+20,by-15); ctx.lineTo(pullX,pullY); ctx.stroke();
-    drawPlaneAt(pullX,pullY,0,true);
+    if (isAMM) drawAMMAt(pullX,pullY,true); else drawPlaneAt(pullX,pullY,0,true);
     const adx=pullX-bx, ady=pullY-by;
     const ang=Math.atan2(ady,-adx);
     if(ang>0&&ang<Math.PI){
-      ctx.strokeStyle='rgba(100,200,255,0.3)'; ctx.lineWidth=1.5; ctx.setLineDash([5,8]);
+      ctx.strokeStyle=isAMM?'rgba(0,220,255,0.35)':'rgba(100,200,255,0.3)';
+      ctx.lineWidth=1.5; ctx.setLineDash([5,8]);
       ctx.beginPath();
-      let px=bx,py=by,pvx=Math.cos(ang)*10,pvy=-Math.sin(ang)*10;
+      // AMM: faster (15) + near-zero gravity (0.015); plane: speed 10 + gravity 0.04
+      let px=bx,py=by,
+          pvx=Math.cos(ang)*(isAMM?15:10),
+          pvy=-Math.sin(ang)*(isAMM?15:10);
       ctx.moveTo(px,py);
-      for(let i=0;i<120;i++){pvy+=0.04;px+=pvx;py+=pvy;ctx.lineTo(px,py);if(px>W()||py>GROUND())break;}
+      for(let i=0;i<140;i++){
+        pvy+=(isAMM?0.015:0.04);px+=pvx;py+=pvy;
+        ctx.lineTo(px,py);
+        if(px>W()||py>GROUND()||py<-50)break;
+      }
       ctx.stroke(); ctx.setLineDash([]);
     }
   } else if(phase==='aim'){
-    ctx.strokeStyle='#cc9944'; ctx.lineWidth=3;
+    ctx.strokeStyle=isAMM?'#00ccff':'#cc9944'; ctx.lineWidth=3;
     ctx.beginPath(); ctx.moveTo(bx-20,by-15); ctx.lineTo(bx,by); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(bx+20,by-15); ctx.lineTo(bx,by); ctx.stroke();
-    drawPlaneAt(bx,by,0,false);
+    if (isAMM) drawAMMAt(bx,by,false); else drawPlaneAt(bx,by,0,false);
   }
 }
 
@@ -454,6 +511,45 @@ function drawPlane(){
     ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fill();
   });
   drawPlaneAt(plane.x,plane.y,Math.atan2(plane.vy,plane.vx),false);
+}
+
+function drawAMMAt(x, y, preview) {
+  ctx.save(); ctx.translate(x, y);
+  // Body — sleek horizontal missile
+  ctx.fillStyle = preview ? 'rgba(0,200,255,0.7)' : '#00ccff';
+  ctx.beginPath(); ctx.ellipse(0,0,16,5,0,0,Math.PI*2); ctx.fill();
+  // Nose cone — pointing right (+x)
+  ctx.fillStyle = preview ? 'rgba(200,240,255,0.8)' : '#ffffff';
+  ctx.beginPath(); ctx.moveTo(20,0); ctx.lineTo(16,-4); ctx.lineTo(16,4); ctx.closePath(); ctx.fill();
+  // Fins — at rear (-x)
+  ctx.fillStyle = preview ? 'rgba(0,140,200,0.7)' : '#0088aa';
+  [[-7,-6],[-7,6]].forEach(([fx,fy])=>{
+    ctx.beginPath(); ctx.moveTo(-16,0); ctx.lineTo(fx,fy); ctx.lineTo(-10,0); ctx.closePath(); ctx.fill();
+  });
+  ctx.restore();
+}
+
+function drawAMM() {
+  if (!amm) return;
+  amm.trail.forEach((p,i)=>{
+    ctx.fillStyle=`rgba(0,200,255,${i/amm.trail.length*0.4})`;
+    ctx.beginPath(); ctx.arc(p.x,p.y,2,0,Math.PI*2); ctx.fill();
+  });
+  ctx.save(); ctx.translate(amm.x,amm.y);
+  ctx.rotate(Math.atan2(amm.vy,amm.vx));
+  // Body
+  ctx.fillStyle='#00ccff';
+  ctx.beginPath(); ctx.ellipse(0,0,16,5,0,0,Math.PI*2); ctx.fill();
+  // Nose (+x = direction of travel)
+  ctx.fillStyle='#ffffff';
+  ctx.beginPath(); ctx.moveTo(20,0); ctx.lineTo(16,-4); ctx.lineTo(16,4); ctx.closePath(); ctx.fill();
+  // Exhaust plume (-x)
+  const fl=Math.random();
+  ctx.fillStyle=`rgba(100,220,255,${0.7+fl*0.3})`;
+  ctx.beginPath(); ctx.moveTo(-16,-4); ctx.lineTo(-16,4); ctx.lineTo(-16-12-fl*6,0); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='rgba(220,245,255,0.9)';
+  ctx.beginPath(); ctx.moveTo(-16,-1.5); ctx.lineTo(-16,1.5); ctx.lineTo(-16-7,0); ctx.closePath(); ctx.fill();
+  ctx.restore();
 }
 
 function drawBomb(){
@@ -636,6 +732,7 @@ function draw(){
   drawHole();
   drawMissiles();
   drawPlane();
+  drawAMM();
   drawBomb();
   drawExplosions();
 }
