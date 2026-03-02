@@ -144,7 +144,8 @@ function dropBomb() {
 const MISSILE_L = 55;
 
 function spawnHole() {
-  const timer = Math.max(90, Math.round(240 - diffProgress() * 150)); // 4 s → 1.5 s
+  const wBonus = W() > 800 ? Math.round((W() - 800) * 0.12) : 0; // extra time on wide screens
+  const timer = Math.max(90, Math.round(240 - diffProgress() * 150)) + wBonus;
   hole = {
     x: W()*0.38 + Math.random()*W()*0.45,
     state: 'active', // active|blocked|fired
@@ -156,14 +157,19 @@ function spawnHole() {
 
 function fireGroundMissile(h) {
   const mSpeed = 0.65 + diffProgress() * 0.35;
-  // Launch upward, then after ~20 frames steer to low-altitude cruise toward player
+  const aimX = BASE().x + (Math.random() * 55 - 5);
+  const dist = h.x - aimX; // always positive (missile goes left)
+  const g = 0.09;
+  // Constant lateral acceleration gives a smooth natural arc: starts vertical, curves left.
+  // aLat scales with mSpeed (harder = faster). tLand is derived from dist and aLat.
+  const aLat = 0.075 * mSpeed;
+  const tLand = Math.max(55, Math.sqrt(2 * dist / aLat));
+  const aLateral = -(2 * dist) / (tLand * tLand); // exact leftward accel to reach aimX
+  const vy0 = -0.5 * g * tLand;                    // upward kick so missile lands at tLand
   missiles.push({
     x: h.x, y: GROUND() - 5,
-    vx: (Math.random() - 0.55) * 0.5,
-    vy: -5.5 * mSpeed,
-    g: 0.09,
-    steerTimer: 20,
-    aimX: BASE().x + (Math.random() * 55 - 5),
+    vx: 0, vy: vy0, g,
+    aLateral,
     trail: [], dead: false, truckId: h.id,
     fromGround: true
   });
@@ -171,12 +177,13 @@ function fireGroundMissile(h) {
 
 function spawnTruck() {
   const stopX = W()*0.55 + Math.random()*W()*0.28;
+  const wBonus = W() > 800 ? Math.round((W() - 800) * 0.12) : 0;
   truck = {
     x: W()+130, y: GROUND()-28,
     targetX: stopX,
     state: 'driving', // driving|raising|ready|fired|retreating
     angle: 0,         // 0=horizontal, 90=vertical (launch)
-    readyTimer: Math.max(50, 140 - diffProgress() * 80) + Math.random() * 40,
+    readyTimer: Math.max(50, 140 - diffProgress() * 80) + Math.random() * 40 + wBonus,
     id: Math.random()
   };
 }
@@ -207,16 +214,22 @@ function fireMissile() {
   const startX = (e.x + n.x) / 2;
   const startY = (e.y + n.y) / 2;
   const aimX = BASE().x + (Math.random() * 60 - 15);
-  const vy0 = -4.5 * mSpeed;
+  const dist = startX - aimX; // positive (going left)
+  const h0 = GROUND() - startY; // missile starts this many px above ground (~64px)
   const g = 0.09;
-  // Solve time-to-land accounting for starting above ground
-  const h0 = GROUND() - startY; // height above ground at launch
+  // Same smooth-arc approach: constant lateral acceleration, starts pointing up.
+  // h0 head-start means it gets extra time → adjust tLand with exact quadratic.
+  const aLat = 0.075 * mSpeed;
+  const tLandBase = Math.max(55, Math.sqrt(2 * dist / aLat));
+  // Exact tLand: solve 0.5*g*t² + vy0*t - h0 = 0 with vy0 = -0.5*g*tLand (from base)
+  // Iterate once: use tLandBase to get vy0, then solve exact t.
+  const vy0 = h0 / tLandBase - 0.5 * g * tLandBase; // derived to land at tLandBase
   const tLand = (-vy0 + Math.sqrt(vy0 * vy0 + 2 * g * h0)) / g;
+  const aLateral = -(2 * dist) / (tLand * tLand);
   missiles.push({
     x: startX, y: startY,
-    vx: (aimX - startX) / tLand,
-    vy: vy0,
-    g,
+    vx: 0, vy: vy0, g,
+    aLateral,
     trail: [], dead: false, truckId: t.id
   });
   t.state = 'fired';
@@ -293,18 +306,8 @@ function update() {
     m.trail.push({x:m.x,y:m.y});
     if (m.trail.length>28) m.trail.shift();
     m.vy += (m.g ?? 0.07);
+    if (m.aLateral) m.vx += m.aLateral; // smooth lateral acceleration (curved arc)
     m.x += m.vx; m.y += m.vy;
-
-    // Ground-missile guidance: after brief upward phase steer to low cruise
-    if (m.steerTimer > 0) {
-      m.steerTimer--;
-      if (m.steerTimer === 0) {
-        const dist = m.aimX - m.x;
-        m.vx = dist / 78; // cruise ~78 frames to landing
-        m.vy = -0.5;
-        m.g = 0.03;
-      }
-    }
 
     // Primary hit: missile reaches the ground near the player
     if (!m.dead && m.y >= GROUND() - 8) {
