@@ -11,11 +11,33 @@ canvas { display: block; width: 100vw; height: 100vh; }
 #msg { position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%);
   color: #ffdd00; font-size: 28px; font-weight: bold; text-align: center;
   text-shadow: 0 0 20px #ff8800; pointer-events: none; opacity: 0; transition: opacity 0.3s; white-space: pre-line; }
+#rotateOverlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: #05050f;
+  color: #fff;
+  font-size: 22px;
+  font-family: Arial, sans-serif;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  text-align: center;
+  gap: 18px;
+  z-index: 100;
+}
+#rotateOverlay .icon { font-size: 60px; animation: spin 2s ease-in-out infinite; }
+@keyframes spin { 0%,100%{transform:rotate(0deg)} 50%{transform:rotate(90deg)} }
+@media (orientation: portrait) { #rotateOverlay { display: flex; } }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="msg"></div>
+<div id="rotateOverlay">
+  <div class="icon">📱</div>
+  <div>סובב את המכשיר למצב אופקי</div>
+  <div style="font-size:15px;opacity:0.55">Rotate device to landscape to play</div>
+</div>
 <script>
 const c = document.getElementById('c');
 const ctx = c.getContext('2d');
@@ -25,29 +47,65 @@ window.addEventListener('resize', resize);
 
 const W = () => c.width;
 const H = () => c.height;
-const GROUND = () => c.height - (c.width > c.height ? 85 : 130);
+const GROUND = () => c.height - 85;
 const BASE = () => ({ x: 70, y: GROUND() - 60 });
-
-let score = 0, lives = 3, gameOver = false;
-let highScore = parseInt(localStorage.getItem('lionRoarHighScore') || '0');
-let phase = 'aim';
-let plane = null, bomb = null;
-let explosions = [], missiles = [];
-let msgTimer = 0, frameCount = 0, nextSpawn = 120;
-let truck = null, hole = null;
-let isDragging = false, dragStart = null, dragCurrent = null;
 const MAX_PULL = 70;
+const MISSILE_L = 55;
 
-// ── Flags (drawn as canvas graphics) ──
-// Iran: green/white/red horizontal + emblem
-// Israel: white/blue with Star of David
+// ── LEVEL SYSTEM ──
+const ATTACK_CITIES = ['תהרן', 'איספהאן', 'שיראז', 'נתנז', 'פורדו'];
+function getLevelType(stage) { return stage % 2 === 1 ? 'attack' : 'defense'; }
+function getAttackCity(stage) { return ATTACK_CITIES[Math.floor((stage - 1) / 2) % ATTACK_CITIES.length]; }
 
+const LEVEL_DEFS = {
+  defense: {
+    nameHe: 'הגנה!',
+    color: '#44aaff',
+    instructionsHe: ['הגן על הבסיס!', 'פגע במשאיות וחסום בארות אדמה', 'שרוד 45 שניות'],
+    getSubtitle: (_s) => 'שמור על הבסיס',
+  },
+  attack: {
+    nameHe: 'התקפה!',
+    color: '#ff4444',
+    instructionsHe: ['הפל פצצה על המנהיגים!', 'פגע במנהיג רץ או הפגז בניין', '3 מטוסים לכל שלב'],
+    getSubtitle: (s) => getAttackCity(s),
+  }
+};
+
+// ── GAME STATE ──
+let gameState = 'getReady'; // 'getReady' | 'playing' | 'stageClear' | 'gameOver'
+let currentStage = 1;
+let score = 0;
+let highScore = parseInt(localStorage.getItem('lionRoarHighScore') || '0');
+let frameCount = 0;
+let msgTimer = 0;
+let stageClearTimer = 0;
+
+// ── SHARED PLANE / BOMB ──
+let phase = 'aim'; // 'aim' | 'flying' | 'bomb_dropped'
+let plane = null, bomb = null;
+let isDragging = false, dragStart = null, dragCurrent = null;
+let explosions = [];
+
+// ── DEFENSE STATE ──
+let lives = 3;
+let truck = null, hole = null;
+let missiles = [];
+let nextSpawn = 0;
+let defenseFrameCount = 0;
+const DEFENSE_STAGE_DURATION = 2700; // 45 seconds at 60fps
+
+// ── ATTACK STATE ──
+let attackBuildings = [];
+let leaders = [];
+let attackPlanesLeft = 3;
+let leadersHit = 0;
+
+// ── FLAGS ──
 function drawIranFlag(x, y, w, h) {
-  // Three horizontal stripes
   ctx.fillStyle = '#239f40'; ctx.fillRect(x, y, w, h/3);
   ctx.fillStyle = '#ffffff'; ctx.fillRect(x, y+h/3, w, h/3);
   ctx.fillStyle = '#da0000'; ctx.fillRect(x, y+2*h/3, w, h/3);
-  // Simple emblem (stylized)
   ctx.fillStyle = '#da0000';
   ctx.font = `bold ${h*0.45}px serif`;
   ctx.textAlign = 'center';
@@ -60,16 +118,13 @@ function drawIsraelFlag(x, y, w, h) {
   ctx.fillStyle = '#0038b8';
   ctx.fillRect(x, y+stripe*0.5, w, stripe);
   ctx.fillRect(x, y+h-stripe*1.5, w, stripe);
-  // Star of David
   const cx2 = x+w/2, cy2 = y+h/2, r = h*0.25;
   ctx.strokeStyle = '#0038b8'; ctx.lineWidth = h*0.06; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  // Triangle up
   ctx.beginPath();
   ctx.moveTo(cx2, cy2-r);
   ctx.lineTo(cx2+r*Math.sin(Math.PI*2/3), cy2-r*Math.cos(Math.PI*2/3));
   ctx.lineTo(cx2+r*Math.sin(Math.PI*4/3), cy2-r*Math.cos(Math.PI*4/3));
   ctx.closePath(); ctx.stroke();
-  // Triangle down
   ctx.beginPath();
   ctx.moveTo(cx2, cy2+r);
   ctx.lineTo(cx2+r*Math.sin(Math.PI*2/3), cy2+r*Math.cos(Math.PI*2/3));
@@ -79,8 +134,11 @@ function drawIsraelFlag(x, y, w, h) {
 
 // ── INPUT ──
 function getXY(e) { return { x: e.clientX ?? e.pageX, y: e.clientY ?? e.pageY }; }
+
 function onDown(e) {
-  if (gameOver) { resetGame(); return; }
+  if (gameState === 'getReady') { startStage(); return; }
+  if (gameState === 'gameOver') { resetGame(); return; }
+  if (gameState === 'stageClear') return;
   const pt = getXY(e);
   if (phase === 'aim') { isDragging = true; dragStart = {...pt}; dragCurrent = {...pt}; }
   else if (phase === 'flying') dropBomb();
@@ -102,7 +160,7 @@ c.addEventListener('touchstart', e=>{e.preventDefault();onDown(e.touches[0]);},{
 c.addEventListener('touchmove',  e=>{e.preventDefault();onMove(e.touches[0]);},{passive:false});
 c.addEventListener('touchend',   e=>{e.preventDefault();onUp(e.changedTouches[0]);},{passive:false});
 
-// ── PLANE ──
+// ── SHARED: PLANE / BOMB ──
 function launchPlane(angle) {
   const a = Math.max(0.1, Math.min(1.48, angle));
   plane = { x: BASE().x, y: BASE().y, vx: Math.cos(a)*10, vy: -Math.sin(a)*10, hasBomb: true, trail: [] };
@@ -113,114 +171,66 @@ function dropBomb() {
   bomb = { x: plane.x, y: plane.y, vx: plane.vx*0.4, vy: plane.vy*0.3 };
   plane.hasBomb = false; phase = 'bomb_dropped';
 }
-function resetPlane() { plane = null; bomb = null; phase = 'aim'; }
+function resetPlane() {
+  const wasActive = phase !== 'aim';
+  plane = null; bomb = null; phase = 'aim';
+  if (wasActive && getLevelType(currentStage) === 'attack' && gameState === 'playing') {
+    attackPlanesLeft--;
+    if (attackPlanesLeft <= 0 || leadersHit >= 10) enterStageClear();
+  }
+}
 
-// ── TRUCK ──
-// Missile pivot = engine end (right side when horizontal)
-// enginePt is fixed on truck, nozzle always stays there.
-// angle: 0 = missile horizontal (nose left, engine right)
-//        90 = missile vertical (nose up, engine at pivot bottom)
-// The missile length L in world px:
-const MISSILE_L = 55;
+// ── HELPERS ──
+function showMsg(txt, color) {
+  const el = document.getElementById('msg');
+  el.textContent = txt; el.style.color = color || '#ffdd00'; el.style.opacity = '1';
+  msgTimer = 100;
+}
+function addExplosion(x, y, big) {
+  explosions.push({ x, y, r: 5, maxR: big ? 90 : 35, alpha: 1 });
+}
+function saveHighScore() {
+  if (score > highScore) { highScore = score; localStorage.setItem('lionRoarHighScore', highScore); }
+}
 
+// ── DEFENSE: DIFFICULTY ──
+function diffProgress() { return Math.min(score / 20, 1); }
+
+// ── DEFENSE: SPAWNING ──
 function spawnHole() {
   const timer = Math.max(30, Math.round(120 - diffProgress() * 90));
-  hole = {
-    x: W()*0.38 + Math.random()*W()*0.45,
-    state: 'active', // active|blocked|fired
-    timer: timer, maxTimer: timer,
-    closeTimer: 0,
-    id: Math.random()
-  };
+  hole = { x: W()*0.38 + Math.random()*W()*0.45, state: 'active', timer, maxTimer: timer, closeTimer: 0, id: Math.random() };
 }
-
 function fireGroundMissile(h) {
   const mSpeed = 1 + diffProgress() * 0.6;
-  missiles.push({
-    x: h.x, y: GROUND() - 5,
-    vx: (Math.random() - 0.5) * 0.4,
-    vy: -10 * mSpeed,
-    trail: [], dead: false, truckId: h.id,
-    fromGround: true
-  });
+  missiles.push({ x: h.x, y: GROUND()-5, vx: (Math.random()-0.5)*0.4, vy: -10*mSpeed, trail: [], dead: false, truckId: h.id, fromGround: true });
 }
-
 function spawnTruck() {
   const stopX = W()*0.55 + Math.random()*W()*0.28;
-  truck = {
-    x: W()+130, y: GROUND()-28,
-    targetX: stopX,
-    state: 'driving', // driving|raising|ready|fired|retreating
-    angle: 0,         // 0=horizontal, 90=vertical (launch)
-    readyTimer: Math.max(50, 140 - diffProgress() * 80) + Math.random() * 40,
-    id: Math.random()
-  };
+  truck = { x: W()+130, y: GROUND()-28, targetX: stopX, state: 'driving', angle: 0,
+    readyTimer: Math.max(50, 140 - diffProgress()*80) + Math.random()*40, id: Math.random() };
 }
-
-// Engine (pivot) position on truck - fixed point
-function enginePt(t) {
-  return { x: t.x - 5, y: t.y - 8 };
-}
-
-// Nose tip position based on angle
-// angle=0: nose is L to the LEFT of engine  → nose=(ex-L, ey)
-// angle=90: nose is L ABOVE engine          → nose=(ex, ey-L)
-// quarter circle: nose = engine + L*(-cos(a), -sin(a))
+function enginePt(t) { return { x: t.x-5, y: t.y-8 }; }
 function nosePt(t) {
-  const e = enginePt(t);
-  const a = t.angle * Math.PI / 180;
-  return {
-    x: e.x - Math.cos(a) * MISSILE_L,
-    y: e.y - Math.sin(a) * MISSILE_L
-  };
+  const e = enginePt(t), a = t.angle * Math.PI / 180;
+  return { x: e.x - Math.cos(a)*MISSILE_L, y: e.y - Math.sin(a)*MISSILE_L };
 }
-
 function fireMissile() {
-  const t = truck;
-  const e = enginePt(t);
-  const n = nosePt(t);
-  // At launch (angle=90), missile goes up-left
-  const mSpeed = 1 + diffProgress() * 0.6; // 1.0x → 1.6x speed multiplier
-  missiles.push({
-    x: (e.x+n.x)/2, y: (e.y+n.y)/2,
-    vx: -4 * mSpeed, vy: -5.5 * mSpeed,
-    trail: [], dead: false, truckId: t.id
-  });
+  const t = truck, e = enginePt(t), n = nosePt(t);
+  const mSpeed = 1 + diffProgress() * 0.6;
+  missiles.push({ x: (e.x+n.x)/2, y: (e.y+n.y)/2, vx: -4*mSpeed, vy: -5.5*mSpeed, trail: [], dead: false, truckId: t.id });
   t.state = 'fired';
   setTimeout(() => { if (truck && truck.id === t.id) truck.state = 'retreating'; }, 600);
 }
 
-function addExplosion(x, y, big) {
-  explosions.push({ x, y, r: 5, maxR: big?90:35, alpha: 1 });
-}
-function showMsg(txt, color) {
-  const el = document.getElementById('msg');
-  el.textContent = txt; el.style.color = color||'#ffdd00'; el.style.opacity = '1';
-  msgTimer = 100;
-}
-function updateUI() { /* drawn on canvas */ }
-function saveHighScore() {
-  if (score > highScore) { highScore = score; localStorage.setItem('lionRoarHighScore', highScore); }
-}
-function endGame() { saveHighScore(); gameOver = true; showMsg('💔 Game Over\nלחץ להתחלה מחדש','#ff4444'); }
-function resetGame() {
-  saveHighScore();
-  score=0; lives=3; gameOver=false; plane=null; bomb=null; phase='aim';
-  explosions=[]; missiles=[]; truck=null; hole=null; frameCount=0; nextSpawn=120;
-  document.getElementById('msg').style.opacity='0';
-}
+// ── DEFENSE: UPDATE ──
+function updateDefense() {
+  defenseFrameCount++;
+  if (defenseFrameCount >= DEFENSE_STAGE_DURATION) { enterStageClear(); return; }
 
-// ── DIFFICULTY ──
-// Returns a 0–1 progress value (caps at score 20)
-function diffProgress() { return Math.min(score / 20, 1); }
-
-// ── UPDATE ──
-function update() {
-  if (gameOver) return;
-  frameCount++;
   if (frameCount >= nextSpawn && !truck && !hole) {
     if (Math.random() < 0.35) spawnHole(); else spawnTruck();
-    const spawnGap = 400 - diffProgress() * 200; // 400 → 200 frames
+    const spawnGap = 400 - diffProgress() * 200;
     nextSpawn = frameCount + Math.max(spawnGap, 180) + Math.random() * 100;
   }
 
@@ -229,95 +239,272 @@ function update() {
       hole.timer--;
       if (hole.timer <= 0) {
         fireGroundMissile(hole);
-        hole.state = 'fired';
-        hole.closeTimer = 130;
+        hole.state = 'fired'; hole.closeTimer = 130;
         showMsg('🚀 טיל אדמה!', '#ff4444');
       }
-    } else {
-      hole.closeTimer--;
-      if (hole.closeTimer <= 0) hole = null;
-    }
+    } else { hole.closeTimer--; if (hole.closeTimer <= 0) hole = null; }
   }
 
   if (truck) {
     const t = truck;
-    if (t.state==='driving') {
-      t.x -= 2.5 + diffProgress() * 2.5; // 2.5 → 5.0 px/frame
+    if (t.state === 'driving') {
+      t.x -= 2.5 + diffProgress() * 2.5;
       if (t.x <= t.targetX) { t.x = t.targetX; t.state = 'raising'; }
-    } else if (t.state==='raising') {
-      t.angle += 1.0;
-      if (t.angle >= 90) { t.angle = 90; t.state = 'ready'; }
-    } else if (t.state==='ready') {
-      t.readyTimer--;
-      if (t.readyTimer <= 0) fireMissile();
-    } else if (t.state==='retreating') {
-      t.x += 3;
-      if (t.x > W()+200) truck = null;
+    } else if (t.state === 'raising') {
+      t.angle += 1.0; if (t.angle >= 90) { t.angle = 90; t.state = 'ready'; }
+    } else if (t.state === 'ready') {
+      t.readyTimer--; if (t.readyTimer <= 0) fireMissile();
+    } else if (t.state === 'retreating') {
+      t.x += 3; if (t.x > W()+200) truck = null;
     }
   }
 
   missiles.forEach(m => {
-    m.trail.push({x:m.x,y:m.y});
-    if (m.trail.length>28) m.trail.shift();
-    m.vy += 0.07; m.vx -= 0.03;
-    m.x += m.vx; m.y += m.vy;
+    m.trail.push({x:m.x,y:m.y}); if (m.trail.length>28) m.trail.shift();
+    m.vy += 0.07; m.vx -= 0.03; m.x += m.vx; m.y += m.vy;
     if (m.fromGround && m.y < -80) {
-      addExplosion(BASE().x + 30, BASE().y - 50, true);
-      lives--;
-      showMsg('💥 טיל מהאדמה פגע!','#ff4444');
-      m.dead = true;
-      if (lives<=0) endGame();
+      addExplosion(BASE().x+30, BASE().y-50, true); lives--;
+      showMsg('💥 טיל מהאדמה פגע!', '#ff4444'); m.dead = true;
+      if (lives <= 0) endGame();
     }
     if (!m.fromGround && m.x < 0) {
-      addExplosion(20, m.y, true);
-      lives--;
-      showMsg('💥 הטיל פגע!','#ff4444');
-      m.dead = true;
-      if (lives<=0) endGame();
+      addExplosion(20, m.y, true); lives--;
+      showMsg('💥 הטיל פגע!', '#ff4444'); m.dead = true;
+      if (lives <= 0) endGame();
     }
     if (m.y > H()+50) m.dead = true;
   });
-  missiles = missiles.filter(m=>!m.dead);
+  missiles = missiles.filter(m => !m.dead);
+}
 
+function checkDefenseBombHit(bx) {
+  let hit = false;
+  if (hole && hole.state === 'active' && Math.abs(bx - hole.x) < 44) {
+    hole.state = 'blocked'; hole.closeTimer = 100; score++;
+    addExplosion(hole.x, GROUND(), false);
+    showMsg('🕳️ חסמת את הבאר!', '#00ff88'); hit = true;
+  }
+  if (!hit && truck && Math.abs(bx - truck.x) < 70 &&
+      (truck.state==='raising'||truck.state==='ready'||truck.state==='fired')) {
+    addExplosion(truck.x, truck.y, true);
+    missiles = missiles.filter(m => m.truckId !== truck.id);
+    truck = null; score++; showMsg('🎯 פגיעה!', '#00ff88'); hit = true;
+  }
+  if (!hit) addExplosion(bx, GROUND(), false);
+}
+
+// ── ATTACK: INIT ──
+// Deterministic pseudo-random from seed
+function seededRand(seed) { const x = Math.sin(seed+1)*10000; return x - Math.floor(x); }
+
+function generateBuildings(stage) {
+  const buildings = [];
+  const count = 7;
+  const margin = 110;
+  const spacing = (W() - margin * 2) / count;
+  for (let i = 0; i < count; i++) {
+    const isBunker = seededRand(stage * 17 + i + 50) < 0.28;
+    const bx = margin + (i + 0.5) * spacing + (seededRand(stage * 13 + i) - 0.5) * spacing * 0.28;
+    const bh = isBunker
+      ? 38 + seededRand(stage * 11 + i + 200) * 28
+      : 65 + seededRand(stage * 11 + i + 200) * 95;
+    const bw = isBunker ? 78 : 54;
+    buildings.push({ id: i, x: bx, width: bw, height: bh, type: isBunker ? 'bunker' : 'building', leaders: [] });
+  }
+  return buildings;
+}
+
+function initAttack() {
+  attackPlanesLeft = 3;
+  leadersHit = 0;
+  leaders = [];
+  // Distribute 10 leaders across buildings
+  for (let i = 0; i < 10; i++) {
+    const bIdx = Math.floor(Math.random() * attackBuildings.length);
+    attackBuildings[bIdx].leaders.push(i);
+    leaders.push({
+      id: i,
+      state: 'hiding', // hiding | running | popping | dead
+      type: Math.random() < 0.6 ? 'runner' : 'popper',
+      currentBuilding: bIdx,
+      x: attackBuildings[bIdx].x,
+      y: GROUND() - 30,
+      targetX: 0, targetBuilding: -1,
+      moveTimer: 80 + Math.floor(Math.random() * 150),
+      popTimer: 0,
+    });
+  }
+}
+
+// ── ATTACK: UPDATE ──
+function updateAttack() {
+  const movingCount = leaders.filter(l => l.state === 'running' || l.state === 'popping').length;
+  leaders.forEach(leader => {
+    if (leader.state === 'dead') return;
+    if (leader.state === 'hiding') {
+      leader.moveTimer--;
+      if (leader.moveTimer <= 0 && movingCount < 3) {
+        if (leader.type === 'runner') {
+          const others = attackBuildings.filter((_, i) => i !== leader.currentBuilding);
+          const target = others[Math.floor(Math.random() * others.length)];
+          const tIdx = attackBuildings.indexOf(target);
+          leader.targetBuilding = tIdx;
+          leader.targetX = target.x;
+          leader.state = 'running';
+          attackBuildings[leader.currentBuilding].leaders =
+            attackBuildings[leader.currentBuilding].leaders.filter(id => id !== leader.id);
+        } else {
+          leader.state = 'popping';
+          leader.popTimer = 28 + Math.floor(Math.random() * 32);
+          leader.x = attackBuildings[leader.currentBuilding].x;
+          leader.y = GROUND() - 32;
+        }
+      }
+    } else if (leader.state === 'running') {
+      const dx = leader.targetX - leader.x;
+      const speed = 2.8;
+      if (Math.abs(dx) <= speed) {
+        leader.x = leader.targetX;
+        leader.currentBuilding = leader.targetBuilding;
+        attackBuildings[leader.targetBuilding].leaders.push(leader.id);
+        leader.state = 'hiding';
+        leader.moveTimer = 90 + Math.floor(Math.random() * 140);
+      } else {
+        leader.x += Math.sign(dx) * speed;
+        leader.y = GROUND() - 30;
+      }
+    } else if (leader.state === 'popping') {
+      leader.popTimer--;
+      if (leader.popTimer <= 0) {
+        leader.state = 'hiding';
+        leader.moveTimer = 90 + Math.floor(Math.random() * 140);
+      }
+    }
+  });
+}
+
+function checkAttackBombHit(bx) {
+  // Check visible leaders first
+  for (const leader of leaders) {
+    if (leader.state === 'dead') continue;
+    if (leader.state === 'running' || leader.state === 'popping') {
+      if (Math.abs(bx - leader.x) < 40) {
+        leader.state = 'dead';
+        attackBuildings.forEach(b => {
+          b.leaders = b.leaders.filter(id => id !== leader.id);
+        });
+        leadersHit++; score++;
+        addExplosion(leader.x, GROUND() - 28, false);
+        showMsg('🎯 מנהיג חוסל!', '#00ff88');
+        return;
+      }
+    }
+  }
+  // Check buildings
+  for (const b of attackBuildings) {
+    if (Math.abs(bx - b.x) <= b.width / 2 + 5) {
+      if (b.leaders.length > 0) {
+        const killId = b.leaders.shift();
+        const leader = leaders[killId];
+        if (leader) leader.state = 'dead';
+        leadersHit++; score++;
+        addExplosion(b.x, GROUND() - b.height * 0.5, true);
+        showMsg('💥 פגיעה בבניין!', '#ff8800');
+      } else {
+        addExplosion(bx, GROUND(), false);
+        showMsg('🏚️ ריק!', '#aaaaaa');
+      }
+      return;
+    }
+  }
+  addExplosion(bx, GROUND(), false);
+}
+
+// ── STAGE MANAGEMENT ──
+function startStage() {
+  gameState = 'playing';
+  phase = 'aim'; plane = null; bomb = null; explosions = []; isDragging = false;
+  document.getElementById('msg').style.opacity = '0';
+  const type = getLevelType(currentStage);
+  if (type === 'defense') {
+    defenseFrameCount = 0;
+    nextSpawn = frameCount + 120;
+    truck = null; hole = null; missiles = [];
+  } else {
+    initAttack();
+  }
+}
+
+function enterStageClear() {
+  saveHighScore();
+  gameState = 'stageClear';
+  stageClearTimer = 210;
+}
+
+function endGame() {
+  saveHighScore();
+  gameState = 'gameOver';
+  showMsg('💔 Game Over\nלחץ להתחלה מחדש', '#ff4444');
+}
+
+function resetGame() {
+  saveHighScore();
+  score = 0; lives = 3; currentStage = 1;
+  gameState = 'getReady';
+  phase = 'aim'; plane = null; bomb = null;
+  explosions = []; missiles = []; truck = null; hole = null;
+  frameCount = 0; defenseFrameCount = 0;
+  attackBuildings = generateBuildings(1);
+  document.getElementById('msg').style.opacity = '0';
+}
+
+// ── MAIN UPDATE ──
+function update() {
+  frameCount++;
+
+  if (gameState === 'stageClear') {
+    stageClearTimer--;
+    if (stageClearTimer <= 0) {
+      currentStage++;
+      if (getLevelType(currentStage) === 'attack') {
+        attackBuildings = generateBuildings(currentStage);
+      }
+      gameState = 'getReady';
+    }
+    return;
+  }
+  if (gameState !== 'playing') return;
+
+  // Shared plane physics
   if (plane) {
     plane.trail.push({x:plane.x,y:plane.y});
     if (plane.trail.length>35) plane.trail.shift();
     plane.vy += 0.04; plane.x += plane.vx; plane.y += plane.vy;
-    if (plane.x>W()+100||plane.y>H()+100) resetPlane();
+    if (plane.x > W()+100 || plane.y > H()+100) resetPlane();
   }
 
+  // Shared bomb physics
   if (bomb) {
     bomb.vy += 0.35; bomb.x += bomb.vx; bomb.y += bomb.vy;
     if (bomb.y >= GROUND()) {
-      let hit = false;
-      if (hole && hole.state === 'active' && Math.abs(bomb.x - hole.x) < 44) {
-        hole.state = 'blocked';
-        hole.closeTimer = 100;
-        score++;
-        addExplosion(hole.x, GROUND(), false);
-        showMsg('🕳️ חסמת את הבאר!','#00ff88');
-        hit = true;
-      }
-      if (!hit && truck && Math.abs(bomb.x - truck.x) < 70 &&
-          (truck.state==='raising'||truck.state==='ready'||truck.state==='fired')) {
-        addExplosion(truck.x, truck.y, true);
-        missiles = missiles.filter(m=>m.truckId!==truck.id);
-        truck = null; score++;
-        showMsg('🎯 פגיעה!','#00ff88');
-        hit = true;
-      }
-      if (!hit) addExplosion(bomb.x, GROUND(), false);
+      if (getLevelType(currentStage) === 'defense') checkDefenseBombHit(bomb.x);
+      else checkAttackBombHit(bomb.x);
       bomb = null; resetPlane();
     }
   }
 
-  explosions.forEach(e=>{ e.r+=(e.maxR-e.r)*0.18; e.alpha-=0.025; });
-  explosions = explosions.filter(e=>e.alpha>0);
-  if (msgTimer>0 && --msgTimer===0) document.getElementById('msg').style.opacity='0';
+  // Level-specific update
+  if (getLevelType(currentStage) === 'defense') updateDefense();
+  else updateAttack();
+
+  // Shared
+  explosions.forEach(e => { e.r += (e.maxR-e.r)*0.18; e.alpha -= 0.025; });
+  explosions = explosions.filter(e => e.alpha > 0);
+  if (msgTimer > 0 && --msgTimer === 0) document.getElementById('msg').style.opacity = '0';
 }
 
-// ── DRAW ──
-function drawBg() {
+// ── DRAW: BACKGROUNDS ──
+function drawDefenseBg() {
   const g = ctx.createLinearGradient(0,0,0,GROUND());
   g.addColorStop(0,'#050510'); g.addColorStop(1,'#0f1f0f');
   ctx.fillStyle=g; ctx.fillRect(0,0,W(),H());
@@ -329,58 +516,100 @@ function drawBg() {
   ctx.fillStyle='#2a4018'; ctx.fillRect(0,GROUND(),W(),10);
 }
 
+function drawAttackBg() {
+  const g = ctx.createLinearGradient(0,0,0,GROUND());
+  g.addColorStop(0,'#1a4a8a'); g.addColorStop(1,'#5a9acc');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W(),H());
+  // Sun
+  ctx.fillStyle='rgba(255,220,80,0.2)'; ctx.beginPath(); ctx.arc(W()*0.82,65,58,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#ffe055'; ctx.beginPath(); ctx.arc(W()*0.82,65,36,0,Math.PI*2); ctx.fill();
+  // Ground (sandy/desert)
+  ctx.fillStyle='#c8a060'; ctx.fillRect(0,GROUND(),W(),H()-GROUND());
+  ctx.fillStyle='#b89050'; ctx.fillRect(0,GROUND(),W(),8);
+  // City
+  drawCityscape();
+}
+
+function drawCityscape() {
+  attackBuildings.forEach(b => {
+    const bx=b.x, bh=b.height, bw=b.width, by=GROUND()-bh;
+    if (b.type === 'bunker') {
+      // Shadow
+      ctx.fillStyle='rgba(0,0,0,0.18)'; ctx.fillRect(bx-bw/2+4, by+4, bw, bh);
+      // Body
+      ctx.fillStyle='#7a7060'; ctx.fillRect(bx-bw/2, by, bw, bh);
+      // Dome
+      ctx.fillStyle='#8a806e';
+      ctx.beginPath(); ctx.ellipse(bx, by, bw/2+8, 20, 0, Math.PI, 0); ctx.fill();
+      // Entrance door
+      ctx.fillStyle='#1a1008'; ctx.fillRect(bx-11, GROUND()-32, 22, 32);
+      // Sandbags
+      ctx.fillStyle='#8a7040'; ctx.fillRect(bx-bw/2-4, GROUND()-13, bw+8, 13);
+      ctx.fillStyle='#9a8050';
+      for (let s=-bw/2; s<bw/2; s+=14) {
+        ctx.beginPath(); ctx.ellipse(bx+s+7, GROUND()-6, 7, 7, 0, Math.PI, 0); ctx.fill();
+      }
+    } else {
+      // Shadow
+      ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(bx-bw/2+4, by+4, bw, bh);
+      // Body
+      ctx.fillStyle='#887868'; ctx.fillRect(bx-bw/2, by, bw, bh);
+      // Roof
+      ctx.fillStyle='#665a4a'; ctx.fillRect(bx-bw/2, by, bw, 10);
+      // Door
+      ctx.fillStyle='#443320'; ctx.fillRect(bx-9, GROUND()-34, 18, 34);
+      // Windows
+      ctx.fillStyle='rgba(160,210,255,0.45)';
+      const rows = Math.max(1, Math.floor(bh/28));
+      for (let r=0; r<rows-1; r++) {
+        ctx.fillRect(bx-bw/2+8, by+14+r*24, 10, 10);
+        if (bw>40) ctx.fillRect(bx+bw/2-18, by+14+r*24, 10, 10);
+      }
+    }
+  });
+}
+
+// ── DRAW: FLAGS ──
 function drawFlags() {
-  const fw = Math.min(90, W()*0.13);
-  const fh = fw * 0.6;
-  const margin = 10;
-  const topY = 8;
-
-  // Title centered at top
-  ctx.fillStyle = 'rgba(255,220,80,0.95)';
-  ctx.font = `bold ${Math.max(16, W()*0.028)}px Arial`;
-  ctx.textAlign = 'center';
-  ctx.fillText('שאגת הארי', W()/2, topY + fh*0.65);
-
-  // Israel — left
+  const fw=Math.min(90,W()*0.13), fh=fw*0.6, margin=10, topY=8;
+  ctx.fillStyle='rgba(255,220,80,0.95)';
+  ctx.font=`bold ${Math.max(16,W()*0.028)}px Arial`;
+  ctx.textAlign='center';
+  ctx.fillText('שאגת הארי', W()/2, topY+fh*0.65);
   drawIsraelFlag(margin, topY, fw, fh);
   ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=1;
   ctx.strokeRect(margin, topY, fw, fh);
-  // Iran — right
   drawIranFlag(W()-margin-fw, topY, fw, fh);
   ctx.strokeRect(W()-margin-fw, topY, fw, fh);
 }
 
-function drawHUD() {
-  const fw = Math.min(90, W()*0.13);
-  const fh = fw*0.6;
-  const dataY = fh + 26;
-  const smallFont = `${Math.max(11,W()*0.018)}px Arial`;
+// ── DRAW: HUD ──
+function drawDefenseHUD() {
+  const fw=Math.min(90,W()*0.13), fh=fw*0.6, dataY=fh+26;
+  const smallFont=`${Math.max(11,W()*0.018)}px Arial`;
 
-  // Score & lives — centered
   ctx.fillStyle='rgba(255,255,255,0.9)';
   ctx.font=`bold ${Math.max(14,W()*0.025)}px Arial`;
   ctx.textAlign='center';
   ctx.fillText(`ניקוד: ${score}   ${'❤️'.repeat(Math.max(0,lives))}`, W()/2, dataY);
 
-  // High score — left aligned under Israel flag
   if (highScore > 0) {
-    ctx.fillStyle='rgba(255,220,100,0.85)';
-    ctx.font=smallFont;
-    ctx.textAlign='left';
+    ctx.fillStyle='rgba(255,220,100,0.85)'; ctx.font=smallFont; ctx.textAlign='left';
     ctx.fillText(`שיא: ${highScore}`, 12, dataY);
   }
 
-  // Level — right aligned under Iran flag
-  const level = Math.floor(diffProgress() * 5) + 1;
-  const levelColors = ['#88ff88','#aaff44','#ffee00','#ff8800','#ff2200'];
-  ctx.fillStyle = levelColors[Math.min(level-1, 4)];
-  ctx.font=smallFont;
-  ctx.textAlign='right';
-  ctx.fillText(`רמה ${level}`, W() - 12, dataY);
+  // Stage label + timer bar (right side)
+  const secsLeft = Math.max(0, Math.ceil((DEFENSE_STAGE_DURATION - defenseFrameCount) / 60));
+  ctx.fillStyle='rgba(255,255,255,0.65)'; ctx.font=smallFont; ctx.textAlign='right';
+  ctx.fillText(`שלב ${currentStage}  ⏱ ${secsLeft}s`, W()-12, dataY-13);
+  const barW=Math.min(100,W()*0.14), barX=W()-12-barW;
+  const pct=Math.min(defenseFrameCount/DEFENSE_STAGE_DURATION,1);
+  ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(barX, dataY-8, barW, 6);
+  ctx.fillStyle = pct<0.5?'#44ff88':pct<0.8?'#ffcc00':'#ff4400';
+  ctx.fillRect(barX, dataY-8, barW*pct, 6);
 
-  // Instructions bottom
   ctx.fillStyle='rgba(255,255,255,0.4)';
-  ctx.font=`${Math.max(11,W()*0.019)}px Arial`;
+  ctx.font=`${Math.max(11,W()*0.019)}px Arial`; ctx.textAlign='center';
   ctx.fillText('גרור את הרוגטקה שמאלה ושחרר • לחץ שוב בטיסה להטיל פצצה', W()/2, GROUND()+58);
 
   if (phase==='flying') {
@@ -390,7 +619,52 @@ function drawHUD() {
   }
 }
 
-function drawSlingshot() {
+function drawAttackHUD() {
+  const fw=Math.min(90,W()*0.13), fh=fw*0.6, dataY=fh+26;
+  const smallFont=`${Math.max(11,W()*0.018)}px Arial`;
+  const alive = leaders.filter(l=>l.state!=='dead').length;
+
+  ctx.fillStyle='rgba(255,80,80,0.9)';
+  ctx.font=`bold ${Math.max(14,W()*0.025)}px Arial`;
+  ctx.textAlign='center';
+  ctx.fillText(`התקפה על ${getAttackCity(currentStage)}  |  מנהיגים: ${leadersHit}/10`, W()/2, dataY);
+
+  // Plane icons (right)
+  ctx.fillStyle='rgba(255,220,100,0.9)'; ctx.font=`${Math.max(13,W()*0.02)}px Arial`; ctx.textAlign='right';
+  ctx.fillText('✈️'.repeat(Math.max(0,attackPlanesLeft)), W()-12, dataY);
+
+  if (highScore > 0) {
+    ctx.fillStyle='rgba(255,220,100,0.85)'; ctx.font=smallFont; ctx.textAlign='left';
+    ctx.fillText(`שיא: ${highScore}`, 12, dataY);
+  }
+
+  ctx.fillStyle='rgba(255,255,255,0.4)';
+  ctx.font=`${Math.max(11,W()*0.019)}px Arial`; ctx.textAlign='center';
+  ctx.fillText('גרור את הרוגטקה שמאלה ושחרר • לחץ שוב בטיסה להטיל פצצה', W()/2, GROUND()+58);
+
+  if (phase==='flying') {
+    ctx.fillStyle='rgba(255,255,50,0.95)';
+    ctx.font=`bold ${Math.max(16,W()*0.032)}px Arial`;
+    ctx.fillText('💣 לחץ להטיל פצצה!', W()/2, Math.min(90,W()*0.13)*0.6+65);
+  }
+}
+
+// ── DRAW: SLINGSHOT / PLANE / BOMB (shared) ──
+function drawPlaneAt(x,y,angle,preview){
+  ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
+  ctx.fillStyle=preview?'rgba(80,150,255,0.7)':'#5599ff';
+  ctx.beginPath(); ctx.ellipse(0,0,18,7,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#88bbff';
+  ctx.beginPath(); ctx.moveTo(18,0); ctx.lineTo(26,0); ctx.lineTo(18,4); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#2255bb';
+  ctx.beginPath(); ctx.moveTo(2,0); ctx.lineTo(-8,-16); ctx.lineTo(-14,0); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-14,0); ctx.lineTo(-20,-10); ctx.lineTo(-18,0); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#333';
+  ctx.beginPath(); ctx.ellipse(0,9,4,7,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawSlingshot(){
   const bx=BASE().x, by=BASE().y;
   ctx.strokeStyle='#7a3a0a'; ctx.lineWidth=9; ctx.lineCap='round';
   ctx.beginPath(); ctx.moveTo(bx-14,by+35); ctx.lineTo(bx-20,by-15); ctx.stroke();
@@ -399,7 +673,7 @@ function drawSlingshot() {
   ctx.beginPath(); ctx.moveTo(bx,by+35); ctx.lineTo(bx,by+65); ctx.stroke();
 
   let pullX=bx, pullY=by;
-  if (isDragging && dragStart && dragCurrent) {
+  if(isDragging&&dragStart&&dragCurrent){
     let dx=dragCurrent.x-dragStart.x, dy=dragCurrent.y-dragStart.y;
     const dist=Math.sqrt(dx*dx+dy*dy);
     if(dist>MAX_PULL){dx=dx/dist*MAX_PULL;dy=dy/dist*MAX_PULL;}
@@ -408,8 +682,7 @@ function drawSlingshot() {
     ctx.beginPath(); ctx.moveTo(bx-20,by-15); ctx.lineTo(pullX,pullY); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(bx+20,by-15); ctx.lineTo(pullX,pullY); ctx.stroke();
     drawPlaneAt(pullX,pullY,0,true);
-    const adx=pullX-bx, ady=pullY-by;
-    const ang=Math.atan2(ady,-adx);
+    const ang=Math.atan2(pullY-by,-(pullX-bx));
     if(ang>0&&ang<Math.PI){
       ctx.strokeStyle='rgba(100,200,255,0.3)'; ctx.lineWidth=1.5; ctx.setLineDash([5,8]);
       ctx.beginPath();
@@ -424,20 +697,6 @@ function drawSlingshot() {
     ctx.beginPath(); ctx.moveTo(bx+20,by-15); ctx.lineTo(bx,by); ctx.stroke();
     drawPlaneAt(bx,by,0,false);
   }
-}
-
-function drawPlaneAt(x,y,angle,preview){
-  ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
-  ctx.fillStyle=preview?'rgba(80,150,255,0.7)':'#5599ff';
-  ctx.beginPath(); ctx.ellipse(0,0,18,7,0,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#88bbff';
-  ctx.beginPath(); ctx.moveTo(18,0); ctx.lineTo(26,0); ctx.lineTo(18,4); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='#2255bb';
-  ctx.beginPath(); ctx.moveTo(2,0); ctx.lineTo(-8,-16); ctx.lineTo(-14,0); ctx.closePath(); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(-14,0); ctx.lineTo(-20,-10); ctx.lineTo(-18,0); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='#333';
-  ctx.beginPath(); ctx.ellipse(0,9,4,7,0,0,Math.PI*2); ctx.fill();
-  ctx.restore();
 }
 
 function drawPlane(){
@@ -457,54 +716,67 @@ function drawBomb(){
   ctx.restore();
 }
 
+// ── DRAW: LEADERS ──
+function drawLeaders(){
+  leaders.forEach(leader => {
+    if(leader.state==='dead'||leader.state==='hiding') return;
+    const lx=leader.x, ly=leader.y;
+    // Body
+    ctx.fillStyle='#22224a'; ctx.fillRect(lx-5,ly-20,10,14);
+    // Head
+    ctx.fillStyle='#cc9966'; ctx.beginPath(); ctx.arc(lx,ly-26,6,0,Math.PI*2); ctx.fill();
+    // Turban
+    ctx.fillStyle='#005522';
+    ctx.beginPath(); ctx.ellipse(lx,ly-30,8,5,0,0,Math.PI*2); ctx.fill();
+    ctx.fillRect(lx-1,ly-35,2,6);
+    // Legs
+    ctx.strokeStyle='#22224a'; ctx.lineWidth=3; ctx.lineCap='round';
+    if(leader.state==='running'){
+      const leg=Math.sin(frameCount*0.35)*7;
+      ctx.beginPath(); ctx.moveTo(lx,ly-8); ctx.lineTo(lx-4+leg,ly+8); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(lx,ly-8); ctx.lineTo(lx+4-leg,ly+8); ctx.stroke();
+      // Arms swinging
+      ctx.beginPath(); ctx.moveTo(lx,ly-16); ctx.lineTo(lx+5-leg*0.5,ly-10); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(lx,ly-16); ctx.lineTo(lx-5+leg*0.5,ly-10); ctx.stroke();
+    } else {
+      // Popping: standing still, looking around
+      ctx.beginPath(); ctx.moveTo(lx,ly-8); ctx.lineTo(lx-4,ly+8); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(lx,ly-8); ctx.lineTo(lx+4,ly+8); ctx.stroke();
+      // Peeking indicator
+      const peekAlpha = 0.5+Math.sin(frameCount*0.2)*0.5;
+      ctx.fillStyle=`rgba(255,220,0,${peekAlpha})`;
+      ctx.font=`${Math.max(10,W()*0.016)}px Arial`;
+      ctx.textAlign='center';
+      ctx.fillText('!', lx, ly-38);
+    }
+  });
+}
+
+// ── DRAW: DEFENSE ENTITIES ──
 function drawTruck(){
   if(!truck) return;
-  const t=truck;
-  const x=t.x, y=t.y;
-
-  // Flatbed
+  const t=truck, x=t.x, y=t.y;
   ctx.fillStyle='#445544'; ctx.fillRect(x-55,y,110,38);
-  // Cab (right side — truck drives left, so cab is at right/front)
   ctx.fillStyle='#556655'; ctx.fillRect(x+35,y-18,30,30);
   ctx.fillStyle='#aaddff'; ctx.fillRect(x+37,y-15,24,13);
-  // Wheels
   [x-35,x-5,x+40].forEach(wx=>{
     ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(wx,y+38,13,0,Math.PI*2); ctx.fill();
     ctx.strokeStyle='#666'; ctx.lineWidth=3; ctx.stroke();
   });
-  // Driver
   ctx.save(); ctx.translate(x+50,y-16);
   ctx.fillStyle='#2a2a2a'; ctx.fillRect(-6,-6,12,14);
   ctx.fillStyle='#c8a070'; ctx.beginPath(); ctx.arc(0,-12,6,0,Math.PI*2); ctx.fill();
   ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(0,-15,7,Math.PI,Math.PI*2); ctx.fill();
   ctx.restore();
-
-  // ── MISSILE ──
-  // Engine (pivot) is fixed on truck. Nose sweeps quarter circle.
-  // angle=0: horizontal, nose left  → nosePt = (ex-L, ey)
-  // angle=90: vertical, nose up     → nosePt = (ex, ey-L)
   if(t.state==='driving'||t.state==='raising'||t.state==='ready'){
-    const e=enginePt(t);
-    const n=nosePt(t);
-
-    // bodyAngle: from engine→nose (so nose is "forward"/left visually)
+    const e=enginePt(t), n=nosePt(t);
     const dx=n.x-e.x, dy=n.y-e.y;
-    const bodyAngle=Math.atan2(dy,dx);
-    const midX=(e.x+n.x)/2, midY=(e.y+n.y)/2;
-
+    const bodyAngle=Math.atan2(dy,dx), midX=(e.x+n.x)/2, midY=(e.y+n.y)/2;
     ctx.save(); ctx.translate(midX,midY); ctx.rotate(bodyAngle);
-    // body
-    ctx.fillStyle='#cc1100';
-    ctx.beginPath(); ctx.ellipse(0,0,MISSILE_L/2,7,0,0,Math.PI*2); ctx.fill();
-    // Nose cone — sleek pointed tip outward
-    ctx.fillStyle='#dd6600';
-    ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-6); ctx.lineTo(MISSILE_L/2,6); ctx.closePath(); ctx.fill();
-    ctx.fillStyle='rgba(255,200,80,0.7)';
-    ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-3); ctx.lineTo(MISSILE_L/2+8,0); ctx.closePath(); ctx.fill();
-    // Engine nozzle at -MISSILE_L/2 (engine side)
-    ctx.fillStyle='#333';
-    ctx.beginPath(); ctx.ellipse(-MISSILE_L/2-4,0,5,9,0,0,Math.PI*2); ctx.fill();
-    // Fins near engine
+    ctx.fillStyle='#cc1100'; ctx.beginPath(); ctx.ellipse(0,0,MISSILE_L/2,7,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#dd6600'; ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-6); ctx.lineTo(MISSILE_L/2,6); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='rgba(255,200,80,0.7)'; ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-3); ctx.lineTo(MISSILE_L/2+8,0); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#333'; ctx.beginPath(); ctx.ellipse(-MISSILE_L/2-4,0,5,9,0,0,Math.PI*2); ctx.fill();
     ctx.fillStyle='#882200';
     [[-6,-8],[-6,8]].forEach(([fx,fy])=>{
       ctx.beginPath(); ctx.moveTo(-MISSILE_L/2+4,0); ctx.lineTo(-MISSILE_L/2+fx,fy); ctx.lineTo(-MISSILE_L/2-2,0); ctx.closePath(); ctx.fill();
@@ -519,17 +791,10 @@ function drawMissiles(){
       ctx.fillStyle=`rgba(255,120,0,${i/m.trail.length*0.5})`;
       ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fill();
     });
-    ctx.save(); ctx.translate(m.x,m.y);
-    ctx.rotate(Math.atan2(m.vy,m.vx));
-    // Consistent convention: nose is on the +X side, engine on -X (matches drawTruck)
-    ctx.fillStyle='#cc1100';
-    ctx.beginPath(); ctx.ellipse(0,0,MISSILE_L/2,7,0,0,Math.PI*2); ctx.fill();
-    // Nose cone — tip points forward (+X = direction of travel)
-    ctx.fillStyle='#dd6600';
-    ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-6); ctx.lineTo(MISSILE_L/2,6); ctx.closePath(); ctx.fill();
-    ctx.fillStyle='rgba(255,200,80,0.7)';
-    ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-3); ctx.lineTo(MISSILE_L/2+8,0); ctx.closePath(); ctx.fill();
-    // Engine exhaust plume — tapered cone pointing backward (-X)
+    ctx.save(); ctx.translate(m.x,m.y); ctx.rotate(Math.atan2(m.vy,m.vx));
+    ctx.fillStyle='#cc1100'; ctx.beginPath(); ctx.ellipse(0,0,MISSILE_L/2,7,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#dd6600'; ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-6); ctx.lineTo(MISSILE_L/2,6); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='rgba(255,200,80,0.7)'; ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-3); ctx.lineTo(MISSILE_L/2+8,0); ctx.closePath(); ctx.fill();
     const fl=Math.random();
     ctx.fillStyle=`rgba(255,${100+Math.floor(fl*100)},0,0.85)`;
     ctx.beginPath(); ctx.moveTo(-MISSILE_L/2,-6); ctx.lineTo(-MISSILE_L/2,6); ctx.lineTo(-MISSILE_L/2-18-fl*8,0); ctx.closePath(); ctx.fill();
@@ -539,73 +804,37 @@ function drawMissiles(){
   });
 }
 
-function drawHole() {
-  if (!hole) return;
-  const h = hole;
-  const gx = h.x, gy = GROUND();
-  const hW = 38, hH = 16;
-
-  // Glow ring when active (urgency ramps from yellow → red)
-  if (h.state === 'active') {
-    const pct = h.timer / h.maxTimer;
-    const pulse = 0.55 + Math.sin(frameCount * 0.3) * 0.45;
-    const gG = Math.round(pct * 200);
+function drawHole(){
+  if(!hole) return;
+  const h=hole, gx=h.x, gy=GROUND(), hW=38, hH=16;
+  if(h.state==='active'){
+    const pct=h.timer/h.maxTimer, pulse=0.55+Math.sin(frameCount*0.3)*0.45, gG=Math.round(pct*200);
     ctx.save();
-    ctx.shadowBlur = 18 + (1 - pct) * 22;
-    ctx.shadowColor = `rgb(255,${gG},0)`;
-    ctx.strokeStyle = `rgba(255,${gG},0,${(0.55 + (1-pct)*0.45) * pulse})`;
-    ctx.lineWidth = 3 + (1-pct) * 3;
-    ctx.beginPath();
-    ctx.ellipse(gx, gy+7, hW+10, hH+7, 0, 0, Math.PI*2);
-    ctx.stroke();
+    ctx.shadowBlur=18+(1-pct)*22; ctx.shadowColor=`rgb(255,${gG},0)`;
+    ctx.strokeStyle=`rgba(255,${gG},0,${(0.55+(1-pct)*0.45)*pulse})`; ctx.lineWidth=3+(1-pct)*3;
+    ctx.beginPath(); ctx.ellipse(gx,gy+7,hW+10,hH+7,0,0,Math.PI*2); ctx.stroke();
     ctx.restore();
-
-    // Countdown bar above hole
-    const barW = 68;
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(gx - barW/2, gy - 22, barW, 7);
-    ctx.fillStyle = pct > 0.55 ? '#00ee66' : pct > 0.28 ? '#ffaa00' : '#ff2200';
-    ctx.fillRect(gx - barW/2, gy - 22, barW * pct, 7);
-
-    // Warning icon
-    const iconAlpha = 0.6 + pulse * 0.4;
-    ctx.fillStyle = `rgba(255,180,0,${iconAlpha})`;
-    ctx.font = `bold ${Math.max(13, W()*0.021)}px Arial`;
-    ctx.textAlign = 'center';
-    ctx.fillText('⚠', gx, gy - 27);
+    const barW=68;
+    ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(gx-barW/2,gy-22,barW,7);
+    ctx.fillStyle=pct>0.55?'#00ee66':pct>0.28?'#ffaa00':'#ff2200';
+    ctx.fillRect(gx-barW/2,gy-22,barW*pct,7);
+    const iconAlpha=0.6+pulse*0.4;
+    ctx.fillStyle=`rgba(255,180,0,${iconAlpha})`;
+    ctx.font=`bold ${Math.max(13,W()*0.021)}px Arial`; ctx.textAlign='center';
+    ctx.fillText('⚠',gx,gy-27);
   }
-
-  // Ground patch (cover existing ground strip so hole is flush)
-  ctx.fillStyle = '#1e3010';
-  ctx.fillRect(gx - hW - 10, gy, (hW + 10)*2, 22);
-
-  // Dark hole oval
-  ctx.fillStyle = '#06060c';
-  ctx.beginPath();
-  ctx.ellipse(gx, gy+7, hW, hH, 0, 0, Math.PI*2);
-  ctx.fill();
-
-  // Rim / edge
-  ctx.strokeStyle = h.state === 'blocked' ? '#22aa44' : '#7a4012';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.ellipse(gx, gy+7, hW, hH, 0, 0, Math.PI*2);
-  ctx.stroke();
-
-  // Dirt clumps around rim
-  ctx.fillStyle = '#3a4e18';
-  [[-hW*0.75, -5], [hW*0.75, -5], [-hW*0.38, -9], [hW*0.38, -9]].forEach(([dx, dy]) => {
-    ctx.beginPath(); ctx.arc(gx+dx, gy+dy, 4, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1e3010'; ctx.fillRect(gx-hW-10,gy,(hW+10)*2,22);
+  ctx.fillStyle='#06060c'; ctx.beginPath(); ctx.ellipse(gx,gy+7,hW,hH,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle=h.state==='blocked'?'#22aa44':'#7a4012'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.ellipse(gx,gy+7,hW,hH,0,0,Math.PI*2); ctx.stroke();
+  ctx.fillStyle='#3a4e18';
+  [[-hW*0.75,-5],[hW*0.75,-5],[-hW*0.38,-9],[hW*0.38,-9]].forEach(([dx,dy])=>{
+    ctx.beginPath(); ctx.arc(gx+dx,gy+dy,4,0,Math.PI*2); ctx.fill();
   });
-
-  if (h.state === 'blocked') {
-    // Bomb wedged in hole
-    ctx.fillStyle = '#222';
-    ctx.beginPath(); ctx.ellipse(gx, gy+7, 11, 9, 0, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#00ff88';
-    ctx.font = `bold ${Math.max(13, W()*0.021)}px Arial`;
-    ctx.textAlign = 'center';
-    ctx.fillText('✓', gx, gy - 10);
+  if(h.state==='blocked'){
+    ctx.fillStyle='#222'; ctx.beginPath(); ctx.ellipse(gx,gy+7,11,9,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#00ff88'; ctx.font=`bold ${Math.max(13,W()*0.021)}px Arial`; ctx.textAlign='center';
+    ctx.fillText('✓',gx,gy-10);
   }
 }
 
@@ -619,19 +848,98 @@ function drawExplosions(){
   });
 }
 
+// ── DRAW: SCREENS ──
+function drawGetReady(){
+  const type = getLevelType(currentStage);
+  if(type==='attack') drawAttackBg(); else drawDefenseBg();
+  // Dark overlay
+  ctx.fillStyle='rgba(0,0,0,0.78)'; ctx.fillRect(0,0,W(),H());
+
+  const cy=H()/2, def=LEVEL_DEFS[type];
+
+  // Stage number
+  ctx.fillStyle='rgba(255,255,255,0.55)';
+  ctx.font=`${Math.max(14,W()*0.022)}px Arial`; ctx.textAlign='center';
+  ctx.fillText(`שלב ${currentStage}`, W()/2, cy-115);
+
+  // Level type (big, coloured)
+  ctx.fillStyle=def.color;
+  ctx.font=`bold ${Math.max(40,W()*0.072)}px Arial`;
+  ctx.fillText(def.nameHe, W()/2, cy-45);
+
+  // Subtitle (city name or label)
+  ctx.fillStyle='rgba(255,220,140,0.95)';
+  ctx.font=`bold ${Math.max(18,W()*0.032)}px Arial`;
+  ctx.fillText(def.getSubtitle(currentStage), W()/2, cy+8);
+
+  // Separator
+  ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(W()/2-160,cy+24); ctx.lineTo(W()/2+160,cy+24); ctx.stroke();
+
+  // Instructions
+  ctx.fillStyle='rgba(255,255,255,0.8)';
+  ctx.font=`${Math.max(13,W()*0.021)}px Arial`;
+  def.instructionsHe.forEach((line,i)=>{
+    ctx.fillText(line, W()/2, cy+50+i*30);
+  });
+
+  // Pulsing tap prompt
+  const pulse=0.55+Math.sin(frameCount*0.08)*0.45;
+  ctx.fillStyle=`rgba(255,220,50,${pulse})`;
+  ctx.font=`bold ${Math.max(15,W()*0.026)}px Arial`;
+  ctx.fillText('לחץ להתחיל ▶', W()/2, cy+160);
+}
+
+function drawStageClear(){
+  ctx.fillStyle='rgba(0,0,0,0.68)'; ctx.fillRect(0,0,W(),H());
+  ctx.fillStyle='#44ff88';
+  ctx.font=`bold ${Math.max(30,W()*0.055)}px Arial`; ctx.textAlign='center';
+  ctx.fillText('✓ שלב הושלם!', W()/2, H()/2-22);
+  if(getLevelType(currentStage)==='attack'){
+    ctx.fillStyle='rgba(255,255,255,0.8)';
+    ctx.font=`${Math.max(15,W()*0.026)}px Arial`;
+    ctx.fillText(`${leadersHit} מנהיגים חוסלו מתוך 10`, W()/2, H()/2+25);
+  }
+  ctx.fillStyle='rgba(255,220,80,0.7)';
+  ctx.font=`${Math.max(12,W()*0.019)}px Arial`;
+  ctx.fillText('מתכונן לשלב הבא...', W()/2, H()/2+62);
+}
+
+// ── MAIN DRAW ──
 function draw(){
   ctx.clearRect(0,0,W(),H());
-  drawBg();
-  drawFlags();
-  drawHUD();
-  drawSlingshot();
-  drawTruck();
-  drawHole();
-  drawMissiles();
-  drawPlane();
-  drawBomb();
-  drawExplosions();
+
+  if(gameState==='getReady'){ drawGetReady(); return; }
+
+  const type=getLevelType(currentStage);
+  if(type==='defense'){
+    drawDefenseBg();
+    drawFlags();
+    drawHole();
+    drawTruck();
+    drawMissiles();
+    drawSlingshot();
+    drawPlane();
+    drawBomb();
+    drawExplosions();
+    drawDefenseHUD();
+  } else {
+    drawAttackBg();
+    drawFlags();
+    drawLeaders();
+    drawSlingshot();
+    drawPlane();
+    drawBomb();
+    drawExplosions();
+    drawAttackHUD();
+  }
+
+  if(gameState==='stageClear') drawStageClear();
 }
+
+// ── BOOT ──
+// Pre-generate buildings for stage 1 (attack) so get ready screen shows city
+attackBuildings = generateBuildings(1);
 
 function loop(){ update(); draw(); requestAnimationFrame(loop); }
 loop();
