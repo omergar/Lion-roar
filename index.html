@@ -7,7 +7,7 @@
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; }
-canvas { display: block; width: 100vw; height: 100vh; }
+canvas { display: block; position: fixed; top: 0; left: 0; }
 #msg { position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%);
   color: #ffdd00; font-size: 28px; font-weight: bold; text-align: center;
   text-shadow: 0 0 20px #ff8800; pointer-events: none; opacity: 0; transition: opacity 0.3s; white-space: pre-line; }
@@ -128,9 +128,27 @@ canvas { display: block; width: 100vw; height: 100vh; }
 <script>
 const c = document.getElementById('c');
 const ctx = c.getContext('2d');
-function resize() { c.width = window.innerWidth; c.height = window.innerHeight; }
+function resize() {
+  // Use visualViewport when available — it reflects the true visible area
+  // after the browser address bar shows/hides on orientation change.
+  const vv = window.visualViewport;
+  const w = vv ? Math.round(vv.width)  : window.innerWidth;
+  const h = vv ? Math.round(vv.height) : window.innerHeight;
+  c.width  = w;
+  c.height = h;
+  c.style.width  = w + 'px';
+  c.style.height = h + 'px';
+  // Shift canvas if the visual viewport is offset (e.g. keyboard open)
+  if (vv) { c.style.top = vv.offsetTop + 'px'; c.style.left = vv.offsetLeft + 'px'; }
+}
 resize();
 window.addEventListener('resize', resize);
+// visualViewport fires more reliably than 'resize' on mobile during orientation change
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', resize);
+}
+// After orientation change the viewport settles after a short delay — resize again
+window.addEventListener('orientationchange', () => { setTimeout(resize, 350); });
 
 const W = () => c.width;
 const H = () => c.height;
@@ -499,7 +517,7 @@ function initAttack() {
       x: attackBuildings[bIdx].x,
       y: GROUND() - 30,
       targetX: 0, targetBuilding: -1,
-      moveTimer: 80 + Math.floor(Math.random() * 150),
+      moveTimer: 200 + Math.floor(Math.random() * 220),
       popTimer: 0,
     });
   }
@@ -531,13 +549,13 @@ function updateAttack() {
       }
     } else if (leader.state === 'running') {
       const dx = leader.targetX - leader.x;
-      const speed = 2.8;
+      const speed = 1.2;
       if (Math.abs(dx) <= speed) {
         leader.x = leader.targetX;
         leader.currentBuilding = leader.targetBuilding;
         attackBuildings[leader.targetBuilding].leaders.push(leader.id);
         leader.state = 'hiding';
-        leader.moveTimer = 90 + Math.floor(Math.random() * 140);
+        leader.moveTimer = 200 + Math.floor(Math.random() * 220);
       } else {
         leader.x += Math.sign(dx) * speed;
         leader.y = GROUND() - 30;
@@ -546,43 +564,53 @@ function updateAttack() {
       leader.popTimer--;
       if (leader.popTimer <= 0) {
         leader.state = 'hiding';
-        leader.moveTimer = 90 + Math.floor(Math.random() * 140);
+        leader.moveTimer = 200 + Math.floor(Math.random() * 220);
       }
     }
   });
 }
 
 function checkAttackBombHit(bx) {
-  // Check visible leaders first
-  for (const leader of leaders) {
-    if (leader.state === 'dead') continue;
-    if (leader.state === 'running' || leader.state === 'popping') {
-      if (Math.abs(bx - leader.x) < 40) {
-        leader.state = 'dead';
-        attackBuildings.forEach(b => {
-          b.leaders = b.leaders.filter(id => id !== leader.id);
-        });
-        leadersHit++; score++;
-        addExplosion(leader.x, GROUND() - 28, false);
-        showMsg('🎯 מנהיג חוסל!', '#00ff88');
-        return;
-      }
-    }
-  }
-  // Check buildings
+  // Primary mechanic: bomb a building → kill EVERYONE inside it (the gathering).
+  // Also catch any runners/poppers visually near the blast radius.
   for (const b of attackBuildings) {
-    if (Math.abs(bx - b.x) <= b.width / 2 + 5) {
-      if (b.leaders.length > 0) {
-        const killId = b.leaders.shift();
-        const leader = leaders[killId];
-        if (leader) leader.state = 'dead';
-        leadersHit++; score++;
+    if (Math.abs(bx - b.x) <= b.width / 2 + 10) {
+      let killed = 0;
+      // Kill all leaders hiding inside this building
+      b.leaders.forEach(id => {
+        if (leaders[id]) { leaders[id].state = 'dead'; killed++; }
+      });
+      b.leaders = [];
+      // Also kill any visible runners/poppers near the blast
+      leaders.forEach(l => {
+        if (l.state === 'dead') return;
+        if ((l.state === 'running' || l.state === 'popping') && Math.abs(bx - l.x) < 55) {
+          l.state = 'dead';
+          attackBuildings.forEach(ab => { ab.leaders = ab.leaders.filter(id => id !== l.id); });
+          killed++;
+        }
+      });
+      if (killed > 0) {
+        leadersHit += killed; score += killed;
         addExplosion(b.x, GROUND() - b.height * 0.5, true);
-        showMsg('💥 פגיעה בבניין!', '#ff8800');
+        if (killed >= 3) showMsg(`🔥 ${killed} מנהיגים!! גאוני!`, '#ffdd00');
+        else if (killed === 2) showMsg(`💥 ${killed} מנהיגים!`, '#ff8800');
+        else showMsg('💥 מנהיג חוסל!', '#ff8800');
       } else {
         addExplosion(bx, GROUND(), false);
         showMsg('🏚️ ריק!', '#aaaaaa');
       }
+      return;
+    }
+  }
+  // Missed all buildings — catch anyone running in the open
+  for (const leader of leaders) {
+    if (leader.state !== 'dead' && leader.state === 'running' && Math.abs(bx - leader.x) < 40) {
+      leader.state = 'dead';
+      attackBuildings.forEach(b => { b.leaders = b.leaders.filter(id => id !== leader.id); });
+      leadersHit++; score++;
+      addExplosion(leader.x, GROUND() - 28, false);
+      showMsg('🎯 נתפס בדרך!', '#00ff88');
       return;
     }
   }
@@ -692,7 +720,7 @@ function update() {
           hit = true;
         }
         if (!hit && truck && Math.abs(bomb.x - truck.x) < 70 &&
-            (truck.state==='raising'||truck.state==='ready'||truck.state==='fired')) {
+            (truck.state==='driving'||truck.state==='raising'||truck.state==='ready'||truck.state==='fired')) {
           addExplosion(truck.x, truck.y, true);
           if (truck.state === 'fired') {
             truck = null;
