@@ -11,11 +11,120 @@ canvas { display: block; width: 100vw; height: 100vh; }
 #msg { position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%);
   color: #ffdd00; font-size: 28px; font-weight: bold; text-align: center;
   text-shadow: 0 0 20px #ff8800; pointer-events: none; opacity: 0; transition: opacity 0.3s; white-space: pre-line; }
+#rotateOverlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: #05050f;
+  color: #fff;
+  font-size: 22px;
+  font-family: Arial, sans-serif;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  text-align: center;
+  gap: 18px;
+  z-index: 100;
+}
+#rotateOverlay .icon { font-size: 60px; animation: spin 2s ease-in-out infinite; }
+@keyframes spin { 0%,100%{transform:rotate(0deg)} 50%{transform:rotate(90deg)} }
+@media (orientation: portrait) { #rotateOverlay { display: flex; } }
+
+/* ── Leaderboard Overlay ── */
+#lbOverlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(5,5,18,0.94);
+  color: #fff;
+  font-family: Arial, sans-serif;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  z-index: 60;
+  overflow-y: auto;
+  padding: 24px 16px;
+}
+#lbOverlay h2 { color: #ff4444; font-size: clamp(22px, 4.5vw, 44px); margin: 0; }
+#lbOverlay .lb-score { color: #ffdd00; font-size: clamp(16px, 2.8vw, 28px); }
+#lbOverlay .lb-prompt { color: #aaaacc; font-size: clamp(12px, 1.8vw, 16px); }
+#nameInput {
+  font-size: clamp(15px, 2.2vw, 20px);
+  padding: 10px 18px;
+  border: 2px solid #4477ff;
+  border-radius: 8px;
+  background: #111;
+  color: #fff;
+  width: min(320px, 82vw);
+  text-align: center;
+  outline: none;
+  direction: ltr;
+}
+#nameInput:focus { border-color: #88aaff; box-shadow: 0 0 8px rgba(100,150,255,0.4); }
+.lb-btn {
+  font-size: clamp(14px, 1.9vw, 18px);
+  padding: 10px 26px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.lb-btn:hover { opacity: 0.85; transform: scale(1.02); }
+.lb-btn:active { transform: scale(0.97); }
+#lbSubmitBtn  { background: #4477ff; color: #fff; }
+#lbSkipBtn    { background: transparent; color: #888; font-size: clamp(12px,1.6vw,15px); padding: 6px 16px; text-decoration: underline; }
+#lbPlayAgain  { background: #33aa66; color: #fff; }
+#lbTable {
+  display: none;
+  width: min(400px, 92vw);
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+#lbTable h3  { text-align: center; color: #ffaa22; margin-bottom: 10px; font-size: clamp(14px,2vw,18px); }
+#lbEntries   { }
+.lb-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 2px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  font-size: clamp(11px,1.7vw,15px);
+}
+.lb-row:last-child { border-bottom: none; }
+.lb-row .rank  { color: #888; min-width: 30px; }
+.lb-row .pname { flex: 1; color: #ddd; padding: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-row .pscore{ color: #ffdd00; font-weight: bold; }
+#lbStatus { color: #aaa; font-size: clamp(12px,1.6vw,15px); font-style: italic; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="msg"></div>
+<div id="rotateOverlay">
+  <div class="icon">📱</div>
+  <div>סובב את המכשיר למצב אופקי</div>
+  <div style="font-size:15px;opacity:0.55">Rotate device to landscape to play</div>
+</div>
+
+<!-- Leaderboard overlay -->
+<div id="lbOverlay">
+  <h2 id="lbTitle">💔 נגמרו הסיכויים!</h2>
+  <div class="lb-score">ניקוד סופי: <strong id="lbFinalScore">0</strong></div>
+  <div class="lb-prompt">הכנס שמך לטבלת השיאים</div>
+  <input id="nameInput" type="text" maxlength="20" placeholder="שמך / Your name" autocomplete="off" />
+  <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+    <button class="lb-btn" id="lbSubmitBtn" onclick="lbSubmit()">📤 שלח ניקוד</button>
+    <button class="lb-btn" id="lbSkipBtn" onclick="lbSkip()">דלג →</button>
+  </div>
+  <div id="lbStatus"></div>
+  <div id="lbTable">
+    <h3>🏆 טבלת שיאים</h3>
+    <div id="lbEntries"></div>
+  </div>
+  <button class="lb-btn" id="lbPlayAgain" style="display:none" onclick="lbPlayAgain()">🔄 שחק שוב</button>
+</div>
 <script>
 const c = document.getElementById('c');
 const ctx = c.getContext('2d');
@@ -25,31 +134,67 @@ window.addEventListener('resize', resize);
 
 const W = () => c.width;
 const H = () => c.height;
-const GROUND = () => c.height - (c.width > c.height ? 85 : 130);
+const GROUND = () => c.height - 85;
 const BASE = () => ({ x: 70, y: GROUND() - 60 });
 
-let score = 0, lives = 3, gameOver = false;
+const MAX_PULL = 70;
+const MISSILE_L = 55;
+
+// ── LEVEL SYSTEM ──
+const ATTACK_CITIES = ['תהרן', 'איספהאן', 'שיראז', 'נתנז', 'פורדו'];
+function getLevelType(stage) { return stage % 2 === 1 ? 'attack' : 'defense'; }
+function getAttackCity(stage) { return ATTACK_CITIES[Math.floor((stage - 1) / 2) % ATTACK_CITIES.length]; }
+
+const LEVEL_DEFS = {
+  defense: {
+    nameHe: 'הגנה!',
+    color: '#44aaff',
+    instructionsHe: ['הגן על הבסיס!', 'פגע במשאיות וחסום בארות אדמה', 'שרוד 45 שניות'],
+    getSubtitle: (_s) => 'שמור על הבסיס',
+  },
+  attack: {
+    nameHe: 'התקפה!',
+    color: '#ff4444',
+    instructionsHe: ['הפל פצצה על המנהיגים!', 'פגע במנהיג רץ או הפגז בניין', '3 מטוסים לכל שלב'],
+    getSubtitle: (s) => getAttackCity(s),
+  }
+};
+
+// ── GAME STATE ──
+let gameState = 'welcome'; // 'welcome' | 'getReady' | 'playing' | 'stageClear' | 'gameOver'
+let currentStage = 1;
+let score = 0;
+let lives = 3;
 let highScore = parseInt(localStorage.getItem('lionRoarHighScore') || '0');
-let phase = 'aim';
+let frameCount = 0;
+let msgTimer = 0;
+let stageClearTimer = 0;
+
+// ── SHARED PLANE / BOMB ──
+let phase = 'aim'; // 'aim' | 'flying' | 'bomb_dropped' | 'amm_flying'
 let plane = null, bomb = null, amm = null;
-let explosions = [], missiles = [];
-let msgTimer = 0, frameCount = 0, nextSpawn = 120;
-let truck = null, hole = null;
 let isDragging = false, dragStart = null, dragCurrent = null;
 let currentTool = 'plane'; // 'plane' | 'amm'
-let gameState = 'welcome';
-const MAX_PULL = 70;
+let explosions = [];
 
-// ── Flags (drawn as canvas graphics) ──
-// Iran: green/white/red horizontal + emblem
-// Israel: white/blue with Star of David
+// ── DEFENSE STATE ──
+let truck = null, hole = null;
+let missiles = [];
+let nextSpawn = 0;
+let defenseFrameCount = 0;
+const DEFENSE_STAGE_DURATION = 2700; // 45 seconds at 60fps
 
+// ── ATTACK STATE ──
+let attackBuildings = [];
+let leaders = [];
+let attackPlanesLeft = 3;
+let leadersHit = 0;
+
+// ── FLAGS ──
 function drawIranFlag(x, y, w, h) {
-  // Three horizontal stripes
   ctx.fillStyle = '#239f40'; ctx.fillRect(x, y, w, h/3);
   ctx.fillStyle = '#ffffff'; ctx.fillRect(x, y+h/3, w, h/3);
   ctx.fillStyle = '#da0000'; ctx.fillRect(x, y+2*h/3, w, h/3);
-  // Simple emblem (stylized)
   ctx.fillStyle = '#da0000';
   ctx.font = `bold ${h*0.45}px serif`;
   ctx.textAlign = 'center';
@@ -62,16 +207,13 @@ function drawIsraelFlag(x, y, w, h) {
   ctx.fillStyle = '#0038b8';
   ctx.fillRect(x, y+stripe*0.5, w, stripe);
   ctx.fillRect(x, y+h-stripe*1.5, w, stripe);
-  // Star of David
   const cx2 = x+w/2, cy2 = y+h/2, r = h*0.25;
   ctx.strokeStyle = '#0038b8'; ctx.lineWidth = h*0.06; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  // Triangle up
   ctx.beginPath();
   ctx.moveTo(cx2, cy2-r);
   ctx.lineTo(cx2+r*Math.sin(Math.PI*2/3), cy2-r*Math.cos(Math.PI*2/3));
   ctx.lineTo(cx2+r*Math.sin(Math.PI*4/3), cy2-r*Math.cos(Math.PI*4/3));
   ctx.closePath(); ctx.stroke();
-  // Triangle down
   ctx.beginPath();
   ctx.moveTo(cx2, cy2+r);
   ctx.lineTo(cx2+r*Math.sin(Math.PI*2/3), cy2+r*Math.cos(Math.PI*2/3));
@@ -81,9 +223,12 @@ function drawIsraelFlag(x, y, w, h) {
 
 // ── INPUT ──
 function getXY(e) { return { x: e.clientX ?? e.pageX, y: e.clientY ?? e.pageY }; }
+
 function onDown(e) {
-  if (gameState === 'welcome') { gameState = 'playing'; return; }
-  if (gameOver) { resetGame(); return; }
+  if (gameState === 'welcome') { gameState = 'getReady'; return; }
+  if (gameState === 'getReady') { startStage(); return; }
+  if (gameState === 'gameOver') return; // overlay handles restart
+  if (gameState === 'stageClear') return;
   const pt = getXY(e);
   if (phase === 'aim') { isDragging = true; dragStart = {...pt}; dragCurrent = {...pt}; }
   else if (phase === 'flying') dropBomb();
@@ -104,7 +249,10 @@ c.addEventListener('mouseup', onUp);
 c.addEventListener('touchstart', e=>{e.preventDefault();onDown(e.touches[0]);},{passive:false});
 c.addEventListener('touchmove',  e=>{e.preventDefault();onMove(e.touches[0]);},{passive:false});
 c.addEventListener('touchend',   e=>{e.preventDefault();onUp(e.changedTouches[0]);},{passive:false});
-window.addEventListener('keydown', e => { if (gameState === 'welcome') gameState = 'playing'; });
+window.addEventListener('keydown', e => {
+  if (gameState === 'welcome') { gameState = 'getReady'; }
+  else if (gameState === 'getReady') { startStage(); }
+});
 
 // ── TOOL SELECTION ──
 function pickTool() {
@@ -118,7 +266,7 @@ function resetTool() {
   currentTool = pickTool();
 }
 
-// ── PLANE ──
+// ── SHARED: PLANE / BOMB ──
 function launchPlane(angle) {
   const a = Math.max(0.1, Math.min(1.48, angle));
   if (currentTool === 'amm') {
@@ -134,15 +282,34 @@ function dropBomb() {
   bomb = { x: plane.x, y: plane.y, vx: plane.vx*0.4, vy: plane.vy*0.3 };
   plane.hasBomb = false; phase = 'bomb_dropped';
 }
+function resetPlane() {
+  const wasActive = phase !== 'aim';
+  plane = null; bomb = null; phase = 'aim';
+  if (wasActive && getLevelType(currentStage) === 'attack' && gameState === 'playing') {
+    attackPlanesLeft--;
+    if (attackPlanesLeft <= 0 || leadersHit >= 10) enterStageClear();
+  }
+  currentTool = pickTool();
+  amm = null;
+}
 
-// ── TRUCK ──
-// Missile pivot = engine end (right side when horizontal)
-// enginePt is fixed on truck, nozzle always stays there.
-// angle: 0 = missile horizontal (nose left, engine right)
-//        90 = missile vertical (nose up, engine at pivot bottom)
-// The missile length L in world px:
-const MISSILE_L = 55;
+// ── HELPERS ──
+function showMsg(txt, color) {
+  const el = document.getElementById('msg');
+  el.textContent = txt; el.style.color = color || '#ffdd00'; el.style.opacity = '1';
+  msgTimer = 100;
+}
+function addExplosion(x, y, big) {
+  explosions.push({ x, y, r: 5, maxR: big ? 90 : 35, alpha: 1 });
+}
+function saveHighScore() {
+  if (score > highScore) { highScore = score; localStorage.setItem('lionRoarHighScore', highScore); }
+}
 
+// ── DEFENSE: DIFFICULTY ──
+function diffProgress() { return Math.min(score / 20, 1); }
+
+// ── DEFENSE: SPAWNING ──
 function spawnHole() {
   const wBonus = W() > 800 ? Math.round((W() - 800) * 0.12) : 0; // extra time on wide screens
   const timer = Math.max(90, Math.round(240 - diffProgress() * 150)) + wBonus;
@@ -154,7 +321,6 @@ function spawnHole() {
     id: Math.random()
   };
 }
-
 function fireGroundMissile(h) {
   const mSpeed = 0.65 + diffProgress() * 0.35;
   const aimX = BASE().x + (Math.random() * 55 - 5);
@@ -174,7 +340,6 @@ function fireGroundMissile(h) {
     fromGround: true
   });
 }
-
 function spawnTruck() {
   const stopX = W()*0.55 + Math.random()*W()*0.28;
   const wBonus = W() > 800 ? Math.round((W() - 800) * 0.12) : 0;
@@ -187,25 +352,11 @@ function spawnTruck() {
     id: Math.random()
   };
 }
-
-// Engine (pivot) position on truck - fixed point
-function enginePt(t) {
-  return { x: t.x - 5, y: t.y - 8 };
-}
-
-// Nose tip position based on angle
-// angle=0: nose is L to the LEFT of engine  → nose=(ex-L, ey)
-// angle=90: nose is L ABOVE engine          → nose=(ex, ey-L)
-// quarter circle: nose = engine + L*(-cos(a), -sin(a))
+function enginePt(t) { return { x: t.x-5, y: t.y-8 }; }
 function nosePt(t) {
-  const e = enginePt(t);
-  const a = t.angle * Math.PI / 180;
-  return {
-    x: e.x - Math.cos(a) * MISSILE_L,
-    y: e.y - Math.sin(a) * MISSILE_L
-  };
+  const e = enginePt(t), a = t.angle * Math.PI / 180;
+  return { x: e.x - Math.cos(a)*MISSILE_L, y: e.y - Math.sin(a)*MISSILE_L };
 }
-
 function fireMissile() {
   const t = truck;
   const e = enginePt(t);
@@ -236,37 +387,14 @@ function fireMissile() {
   setTimeout(() => { if (truck && truck.id === t.id) truck.state = 'retreating'; }, 600);
 }
 
-function addExplosion(x, y, big) {
-  explosions.push({ x, y, r: 5, maxR: big?90:35, alpha: 1 });
-}
-function showMsg(txt, color) {
-  const el = document.getElementById('msg');
-  el.textContent = txt; el.style.color = color||'#ffdd00'; el.style.opacity = '1';
-  msgTimer = 100;
-}
-function updateUI() { /* drawn on canvas */ }
-function saveHighScore() {
-  if (score > highScore) { highScore = score; localStorage.setItem('lionRoarHighScore', highScore); }
-}
-function endGame() { saveHighScore(); gameOver = true; showMsg('💔 Game Over\nלחץ להתחלה מחדש','#ff4444'); }
-function resetGame() {
-  saveHighScore();
-  score=0; lives=3; gameOver=false; plane=null; bomb=null; amm=null; phase='aim'; currentTool='plane';
-  explosions=[]; missiles=[]; truck=null; hole=null; frameCount=0; nextSpawn=120;
-  document.getElementById('msg').style.opacity='0';
-}
+// ── DEFENSE: UPDATE ──
+function updateDefense() {
+  defenseFrameCount++;
+  if (defenseFrameCount >= DEFENSE_STAGE_DURATION) { enterStageClear(); return; }
 
-// ── DIFFICULTY ──
-// Returns a 0–1 progress value (caps at score 20)
-function diffProgress() { return Math.min(score / 20, 1); }
-
-// ── UPDATE ──
-function update() {
-  if (gameOver) return;
-  frameCount++;
   if (frameCount >= nextSpawn && !truck && !hole) {
     if (Math.random() < 0.35) spawnHole(); else spawnTruck();
-    const spawnGap = 400 - diffProgress() * 200; // 400 → 200 frames
+    const spawnGap = 400 - diffProgress() * 200;
     nextSpawn = frameCount + Math.max(spawnGap, 180) + Math.random() * 100;
   }
 
@@ -275,30 +403,23 @@ function update() {
       hole.timer--;
       if (hole.timer <= 0) {
         fireGroundMissile(hole);
-        hole.state = 'fired';
-        hole.closeTimer = 130;
+        hole.state = 'fired'; hole.closeTimer = 130;
         showMsg('🚀 טיל אדמה!', '#ff4444');
       }
-    } else {
-      hole.closeTimer--;
-      if (hole.closeTimer <= 0) hole = null;
-    }
+    } else { hole.closeTimer--; if (hole.closeTimer <= 0) hole = null; }
   }
 
   if (truck) {
     const t = truck;
-    if (t.state==='driving') {
-      t.x -= 2.5 + diffProgress() * 2.5; // 2.5 → 5.0 px/frame
+    if (t.state === 'driving') {
+      t.x -= 2.5 + diffProgress() * 2.5;
       if (t.x <= t.targetX) { t.x = t.targetX; t.state = 'raising'; }
-    } else if (t.state==='raising') {
-      t.angle += 1.0;
-      if (t.angle >= 90) { t.angle = 90; t.state = 'ready'; }
-    } else if (t.state==='ready') {
-      t.readyTimer--;
-      if (t.readyTimer <= 0) fireMissile();
-    } else if (t.state==='retreating') {
-      t.x += 3;
-      if (t.x > W()+200) truck = null;
+    } else if (t.state === 'raising') {
+      t.angle += 1.0; if (t.angle >= 90) { t.angle = 90; t.state = 'ready'; }
+    } else if (t.state === 'ready') {
+      t.readyTimer--; if (t.readyTimer <= 0) fireMissile();
+    } else if (t.state === 'retreating') {
+      t.x += 3; if (t.x > W()+200) truck = null;
     }
   }
 
@@ -322,13 +443,215 @@ function update() {
     // Safety: exits screen without hitting
     if (!m.dead && (m.y > H()+50 || m.x < -60 || m.x > W()+60)) m.dead = true;
   });
-  missiles = missiles.filter(m=>!m.dead);
+  missiles = missiles.filter(m => !m.dead);
+}
 
+function checkDefenseBombHit(bx) {
+  let hit = false;
+  if (hole && hole.state === 'active' && Math.abs(bx - hole.x) < 44) {
+    hole.state = 'blocked'; hole.closeTimer = 100; score++;
+    addExplosion(hole.x, GROUND(), false);
+    showMsg('🕳️ חסמת את הבאר!', '#00ff88'); hit = true;
+  }
+  if (!hit && truck && Math.abs(bx - truck.x) < 70 &&
+      (truck.state==='raising'||truck.state==='ready'||truck.state==='fired')) {
+    addExplosion(truck.x, truck.y, true);
+    missiles = missiles.filter(m => m.truckId !== truck.id);
+    truck = null; score++; showMsg('🎯 פגיעה!', '#00ff88'); hit = true;
+  }
+  if (!hit) addExplosion(bx, GROUND(), false);
+}
+
+// ── ATTACK: INIT ──
+// Deterministic pseudo-random from seed
+function seededRand(seed) { const x = Math.sin(seed+1)*10000; return x - Math.floor(x); }
+
+function generateBuildings(stage) {
+  const buildings = [];
+  const count = 7;
+  const margin = 110;
+  const spacing = (W() - margin * 2) / count;
+  for (let i = 0; i < count; i++) {
+    const isBunker = seededRand(stage * 17 + i + 50) < 0.28;
+    const bx = margin + (i + 0.5) * spacing + (seededRand(stage * 13 + i) - 0.5) * spacing * 0.28;
+    const bh = isBunker
+      ? 38 + seededRand(stage * 11 + i + 200) * 28
+      : 65 + seededRand(stage * 11 + i + 200) * 95;
+    const bw = isBunker ? 78 : 54;
+    buildings.push({ id: i, x: bx, width: bw, height: bh, type: isBunker ? 'bunker' : 'building', leaders: [] });
+  }
+  return buildings;
+}
+
+function initAttack() {
+  attackPlanesLeft = 3;
+  leadersHit = 0;
+  leaders = [];
+  // Distribute 10 leaders across buildings
+  for (let i = 0; i < 10; i++) {
+    const bIdx = Math.floor(Math.random() * attackBuildings.length);
+    attackBuildings[bIdx].leaders.push(i);
+    leaders.push({
+      id: i,
+      state: 'hiding', // hiding | running | popping | dead
+      type: Math.random() < 0.6 ? 'runner' : 'popper',
+      currentBuilding: bIdx,
+      x: attackBuildings[bIdx].x,
+      y: GROUND() - 30,
+      targetX: 0, targetBuilding: -1,
+      moveTimer: 80 + Math.floor(Math.random() * 150),
+      popTimer: 0,
+    });
+  }
+}
+
+// ── ATTACK: UPDATE ──
+function updateAttack() {
+  const movingCount = leaders.filter(l => l.state === 'running' || l.state === 'popping').length;
+  leaders.forEach(leader => {
+    if (leader.state === 'dead') return;
+    if (leader.state === 'hiding') {
+      leader.moveTimer--;
+      if (leader.moveTimer <= 0 && movingCount < 3) {
+        if (leader.type === 'runner') {
+          const others = attackBuildings.filter((_, i) => i !== leader.currentBuilding);
+          const target = others[Math.floor(Math.random() * others.length)];
+          const tIdx = attackBuildings.indexOf(target);
+          leader.targetBuilding = tIdx;
+          leader.targetX = target.x;
+          leader.state = 'running';
+          attackBuildings[leader.currentBuilding].leaders =
+            attackBuildings[leader.currentBuilding].leaders.filter(id => id !== leader.id);
+        } else {
+          leader.state = 'popping';
+          leader.popTimer = 28 + Math.floor(Math.random() * 32);
+          leader.x = attackBuildings[leader.currentBuilding].x;
+          leader.y = GROUND() - 32;
+        }
+      }
+    } else if (leader.state === 'running') {
+      const dx = leader.targetX - leader.x;
+      const speed = 2.8;
+      if (Math.abs(dx) <= speed) {
+        leader.x = leader.targetX;
+        leader.currentBuilding = leader.targetBuilding;
+        attackBuildings[leader.targetBuilding].leaders.push(leader.id);
+        leader.state = 'hiding';
+        leader.moveTimer = 90 + Math.floor(Math.random() * 140);
+      } else {
+        leader.x += Math.sign(dx) * speed;
+        leader.y = GROUND() - 30;
+      }
+    } else if (leader.state === 'popping') {
+      leader.popTimer--;
+      if (leader.popTimer <= 0) {
+        leader.state = 'hiding';
+        leader.moveTimer = 90 + Math.floor(Math.random() * 140);
+      }
+    }
+  });
+}
+
+function checkAttackBombHit(bx) {
+  // Check visible leaders first
+  for (const leader of leaders) {
+    if (leader.state === 'dead') continue;
+    if (leader.state === 'running' || leader.state === 'popping') {
+      if (Math.abs(bx - leader.x) < 40) {
+        leader.state = 'dead';
+        attackBuildings.forEach(b => {
+          b.leaders = b.leaders.filter(id => id !== leader.id);
+        });
+        leadersHit++; score++;
+        addExplosion(leader.x, GROUND() - 28, false);
+        showMsg('🎯 מנהיג חוסל!', '#00ff88');
+        return;
+      }
+    }
+  }
+  // Check buildings
+  for (const b of attackBuildings) {
+    if (Math.abs(bx - b.x) <= b.width / 2 + 5) {
+      if (b.leaders.length > 0) {
+        const killId = b.leaders.shift();
+        const leader = leaders[killId];
+        if (leader) leader.state = 'dead';
+        leadersHit++; score++;
+        addExplosion(b.x, GROUND() - b.height * 0.5, true);
+        showMsg('💥 פגיעה בבניין!', '#ff8800');
+      } else {
+        addExplosion(bx, GROUND(), false);
+        showMsg('🏚️ ריק!', '#aaaaaa');
+      }
+      return;
+    }
+  }
+  addExplosion(bx, GROUND(), false);
+}
+
+// ── STAGE MANAGEMENT ──
+function startStage() {
+  gameState = 'playing';
+  phase = 'aim'; plane = null; bomb = null; amm = null; explosions = []; isDragging = false;
+  currentTool = getLevelType(currentStage) === 'defense' ? pickTool() : 'plane';
+  document.getElementById('msg').style.opacity = '0';
+  const type = getLevelType(currentStage);
+  if (type === 'defense') {
+    defenseFrameCount = 0;
+    nextSpawn = frameCount + 120;
+    truck = null; hole = null; missiles = [];
+  } else {
+    initAttack();
+  }
+}
+
+function enterStageClear() {
+  saveHighScore();
+  gameState = 'stageClear';
+  stageClearTimer = 210;
+}
+
+function endGame() {
+  saveHighScore();
+  gameState = 'gameOver';
+  // Brief pause so the final explosion is visible before overlay appears
+  setTimeout(() => lbShowOverlay(score), 700);
+}
+
+function resetGame() {
+  saveHighScore();
+  score = 0; lives = 3; currentStage = 1;
+  gameState = 'welcome';
+  phase = 'aim'; plane = null; bomb = null; amm = null; currentTool = 'plane';
+  explosions = []; missiles = []; truck = null; hole = null;
+  frameCount = 0; defenseFrameCount = 0;
+  attackBuildings = generateBuildings(1);
+  document.getElementById('msg').style.opacity = '0';
+}
+
+// ── MAIN UPDATE ──
+function update() {
+  frameCount++;
+
+  if (gameState === 'stageClear') {
+    stageClearTimer--;
+    if (stageClearTimer <= 0) {
+      currentStage++;
+      if (getLevelType(currentStage) === 'attack') {
+        attackBuildings = generateBuildings(currentStage);
+      }
+      gameState = 'getReady';
+    }
+    return;
+  }
+  if (gameState !== 'playing') return;
+
+  // Shared plane physics
   if (plane) {
     plane.trail.push({x:plane.x,y:plane.y});
     if (plane.trail.length>35) plane.trail.shift();
     plane.vy += 0.04; plane.x += plane.vx; plane.y += plane.vy;
-    if (plane.x>W()+100||plane.y>H()+100) resetTool();
+    if (plane.x > W()+100 || plane.y > H()+100) resetPlane();
   }
 
   if (amm) {
@@ -353,43 +676,55 @@ function update() {
     }
   }
 
+  // Shared bomb physics
   if (bomb) {
     bomb.vy += 0.35; bomb.x += bomb.vx; bomb.y += bomb.vy;
     if (bomb.y >= GROUND()) {
-      let hit = false;
-      if (hole && hole.state === 'active' && Math.abs(bomb.x - hole.x) < 44) {
-        hole.state = 'blocked';
-        hole.closeTimer = 100;
-        score++;
-        addExplosion(hole.x, GROUND(), false);
-        showMsg('🕳️ חסמת את בור השיגור!','#00ff88');
-        hit = true;
-      }
-      if (!hit && truck && Math.abs(bomb.x - truck.x) < 70 &&
-          (truck.state==='raising'||truck.state==='ready'||truck.state==='fired')) {
-        addExplosion(truck.x, truck.y, true);
-        if (truck.state === 'fired') {
-          truck = null;
-          showMsg('💨 המשגר הושמד!','#ffaa00');
-        } else {
-          missiles = missiles.filter(m=>m.truckId!==truck.id);
-          truck = null; score++;
-          showMsg('🎯 פגיעה!','#00ff88');
+      if (getLevelType(currentStage) === 'defense') {
+        // HEAD version: detailed inline hit logic with "בור השיגור" text
+        let hit = false;
+        if (hole && hole.state === 'active' && Math.abs(bomb.x - hole.x) < 44) {
+          hole.state = 'blocked';
+          hole.closeTimer = 100;
+          score++;
+          addExplosion(hole.x, GROUND(), false);
+          showMsg('🕳️ חסמת את בור השיגור!','#00ff88');
+          hit = true;
         }
-        hit = true;
+        if (!hit && truck && Math.abs(bomb.x - truck.x) < 70 &&
+            (truck.state==='raising'||truck.state==='ready'||truck.state==='fired')) {
+          addExplosion(truck.x, truck.y, true);
+          if (truck.state === 'fired') {
+            truck = null;
+            showMsg('💨 המשגר הושמד!','#ffaa00');
+          } else {
+            missiles = missiles.filter(m=>m.truckId!==truck.id);
+            truck = null; score++;
+            showMsg('🎯 פגיעה!','#00ff88');
+          }
+          hit = true;
+        }
+        if (!hit) addExplosion(bomb.x, GROUND(), false);
+        bomb = null; resetTool();
+      } else {
+        checkAttackBombHit(bomb.x);
+        bomb = null; resetPlane();
       }
-      if (!hit) addExplosion(bomb.x, GROUND(), false);
-      bomb = null; resetTool();
     }
   }
 
-  explosions.forEach(e=>{ e.r+=(e.maxR-e.r)*0.18; e.alpha-=0.025; });
-  explosions = explosions.filter(e=>e.alpha>0);
-  if (msgTimer>0 && --msgTimer===0) document.getElementById('msg').style.opacity='0';
+  // Level-specific update
+  if (getLevelType(currentStage) === 'defense') updateDefense();
+  else updateAttack();
+
+  // Shared
+  explosions.forEach(e => { e.r += (e.maxR-e.r)*0.18; e.alpha -= 0.025; });
+  explosions = explosions.filter(e => e.alpha > 0);
+  if (msgTimer > 0 && --msgTimer === 0) document.getElementById('msg').style.opacity = '0';
 }
 
-// ── DRAW ──
-function drawBg() {
+// ── DRAW: BACKGROUNDS ──
+function drawDefenseBg() {
   const g = ctx.createLinearGradient(0,0,0,GROUND());
   g.addColorStop(0,'#050510'); g.addColorStop(1,'#0f1f0f');
   ctx.fillStyle=g; ctx.fillRect(0,0,W(),H());
@@ -401,54 +736,97 @@ function drawBg() {
   ctx.fillStyle='#2a4018'; ctx.fillRect(0,GROUND(),W(),10);
 }
 
+function drawAttackBg() {
+  const g = ctx.createLinearGradient(0,0,0,GROUND());
+  g.addColorStop(0,'#1a4a8a'); g.addColorStop(1,'#5a9acc');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W(),H());
+  // Sun
+  ctx.fillStyle='rgba(255,220,80,0.2)'; ctx.beginPath(); ctx.arc(W()*0.82,65,58,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#ffe055'; ctx.beginPath(); ctx.arc(W()*0.82,65,36,0,Math.PI*2); ctx.fill();
+  // Ground (sandy/desert)
+  ctx.fillStyle='#c8a060'; ctx.fillRect(0,GROUND(),W(),H()-GROUND());
+  ctx.fillStyle='#b89050'; ctx.fillRect(0,GROUND(),W(),8);
+  // City
+  drawCityscape();
+}
+
+function drawCityscape() {
+  attackBuildings.forEach(b => {
+    const bx=b.x, bh=b.height, bw=b.width, by=GROUND()-bh;
+    if (b.type === 'bunker') {
+      // Shadow
+      ctx.fillStyle='rgba(0,0,0,0.18)'; ctx.fillRect(bx-bw/2+4, by+4, bw, bh);
+      // Body
+      ctx.fillStyle='#7a7060'; ctx.fillRect(bx-bw/2, by, bw, bh);
+      // Dome
+      ctx.fillStyle='#8a806e';
+      ctx.beginPath(); ctx.ellipse(bx, by, bw/2+8, 20, 0, Math.PI, 0); ctx.fill();
+      // Entrance door
+      ctx.fillStyle='#1a1008'; ctx.fillRect(bx-11, GROUND()-32, 22, 32);
+      // Sandbags
+      ctx.fillStyle='#8a7040'; ctx.fillRect(bx-bw/2-4, GROUND()-13, bw+8, 13);
+      ctx.fillStyle='#9a8050';
+      for (let s=-bw/2; s<bw/2; s+=14) {
+        ctx.beginPath(); ctx.ellipse(bx+s+7, GROUND()-6, 7, 7, 0, Math.PI, 0); ctx.fill();
+      }
+    } else {
+      // Shadow
+      ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(bx-bw/2+4, by+4, bw, bh);
+      // Body
+      ctx.fillStyle='#887868'; ctx.fillRect(bx-bw/2, by, bw, bh);
+      // Roof
+      ctx.fillStyle='#665a4a'; ctx.fillRect(bx-bw/2, by, bw, 10);
+      // Door
+      ctx.fillStyle='#443320'; ctx.fillRect(bx-9, GROUND()-34, 18, 34);
+      // Windows
+      ctx.fillStyle='rgba(160,210,255,0.45)';
+      const rows = Math.max(1, Math.floor(bh/28));
+      for (let r=0; r<rows-1; r++) {
+        ctx.fillRect(bx-bw/2+8, by+14+r*24, 10, 10);
+        if (bw>40) ctx.fillRect(bx+bw/2-18, by+14+r*24, 10, 10);
+      }
+    }
+  });
+}
+
+// ── DRAW: FLAGS ──
 function drawFlags() {
-  const fw = Math.min(90, W()*0.13);
-  const fh = fw * 0.6;
-  const margin = 10;
-  const topY = 8;
-
-  // Title centered at top
-  ctx.fillStyle = 'rgba(255,220,80,0.95)';
-  ctx.font = `bold ${Math.max(16, W()*0.028)}px Arial`;
-  ctx.textAlign = 'center';
-  ctx.fillText('שאגת הארי', W()/2, topY + fh*0.65);
-
-  // Israel — left
+  const fw=Math.min(90,W()*0.13), fh=fw*0.6, margin=10, topY=8;
+  ctx.fillStyle='rgba(255,220,80,0.95)';
+  ctx.font=`bold ${Math.max(16,W()*0.028)}px Arial`;
+  ctx.textAlign='center';
+  ctx.fillText('שאגת הארי', W()/2, topY+fh*0.65);
   drawIsraelFlag(margin, topY, fw, fh);
   ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=1;
   ctx.strokeRect(margin, topY, fw, fh);
-  // Iran — right
   drawIranFlag(W()-margin-fw, topY, fw, fh);
   ctx.strokeRect(W()-margin-fw, topY, fw, fh);
 }
 
-function drawHUD() {
-  const fw = Math.min(90, W()*0.13);
-  const fh = fw*0.6;
-  const dataY = fh + 26;
-  const smallFont = `${Math.max(11,W()*0.018)}px Arial`;
+// ── DRAW: HUD ──
+function drawDefenseHUD() {
+  const fw=Math.min(90,W()*0.13), fh=fw*0.6, dataY=fh+26;
+  const smallFont=`${Math.max(11,W()*0.018)}px Arial`;
 
-  // Score & lives — centered
   ctx.fillStyle='rgba(255,255,255,0.9)';
   ctx.font=`bold ${Math.max(14,W()*0.025)}px Arial`;
   ctx.textAlign='center';
   ctx.fillText(`ניקוד: ${score}   ${'❤️'.repeat(Math.max(0,lives))}`, W()/2, dataY);
 
-  // High score — left aligned under Israel flag
   if (highScore > 0) {
-    ctx.fillStyle='rgba(255,220,100,0.85)';
-    ctx.font=smallFont;
-    ctx.textAlign='left';
+    ctx.fillStyle='rgba(255,220,100,0.85)'; ctx.font=smallFont; ctx.textAlign='left';
     ctx.fillText(`שיא: ${highScore}`, 12, dataY);
   }
 
-  // Level — right aligned under Iran flag
-  const level = Math.floor(diffProgress() * 5) + 1;
-  const levelColors = ['#88ff88','#aaff44','#ffee00','#ff8800','#ff2200'];
-  ctx.fillStyle = levelColors[Math.min(level-1, 4)];
-  ctx.font=smallFont;
-  ctx.textAlign='right';
-  ctx.fillText(`רמה ${level}`, W() - 12, dataY);
+  // Stage label + timer bar (right side)
+  const secsLeft = Math.max(0, Math.ceil((DEFENSE_STAGE_DURATION - defenseFrameCount) / 60));
+  ctx.fillStyle='rgba(255,255,255,0.65)'; ctx.font=smallFont; ctx.textAlign='right';
+  ctx.fillText(`שלב ${currentStage}  ⏱ ${secsLeft}s`, W()-12, dataY-13);
+  const barW=Math.min(100,W()*0.14), barX=W()-12-barW;
+  const pct=Math.min(defenseFrameCount/DEFENSE_STAGE_DURATION,1);
+  ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(barX, dataY-8, barW, 6);
+  ctx.fillStyle = pct<0.5?'#44ff88':pct<0.8?'#ffcc00':'#ff4400';
+  ctx.fillRect(barX, dataY-8, barW*pct, 6);
 
   // Instructions bottom — changes based on active tool
   ctx.textAlign='center';
@@ -473,7 +851,37 @@ function drawHUD() {
   }
 }
 
-function drawSlingshot() {
+function drawAttackHUD() {
+  const fw=Math.min(90,W()*0.13), fh=fw*0.6, dataY=fh+26;
+  const smallFont=`${Math.max(11,W()*0.018)}px Arial`;
+
+  ctx.fillStyle='rgba(255,80,80,0.9)';
+  ctx.font=`bold ${Math.max(14,W()*0.025)}px Arial`;
+  ctx.textAlign='center';
+  ctx.fillText(`התקפה על ${getAttackCity(currentStage)}  |  מנהיגים: ${leadersHit}/10`, W()/2, dataY);
+
+  // Plane icons (right)
+  ctx.fillStyle='rgba(255,220,100,0.9)'; ctx.font=`${Math.max(13,W()*0.02)}px Arial`; ctx.textAlign='right';
+  ctx.fillText('✈️'.repeat(Math.max(0,attackPlanesLeft)), W()-12, dataY);
+
+  if (highScore > 0) {
+    ctx.fillStyle='rgba(255,220,100,0.85)'; ctx.font=smallFont; ctx.textAlign='left';
+    ctx.fillText(`שיא: ${highScore}`, 12, dataY);
+  }
+
+  ctx.fillStyle='rgba(255,255,255,0.4)';
+  ctx.font=`${Math.max(11,W()*0.019)}px Arial`; ctx.textAlign='center';
+  ctx.fillText('גרור את הרוגטקה שמאלה ושחרר • לחץ שוב בטיסה להטיל פצצה', W()/2, GROUND()+58);
+
+  if (phase==='flying') {
+    ctx.fillStyle='rgba(255,255,50,0.95)';
+    ctx.font=`bold ${Math.max(16,W()*0.032)}px Arial`;
+    ctx.fillText('💣 לחץ להטיל פצצה!', W()/2, Math.min(90,W()*0.13)*0.6+65);
+  }
+}
+
+// ── DRAW: SLINGSHOT / PLANE / BOMB (shared) ──
+function drawSlingshot(){
   const bx=BASE().x, by=BASE().y;
   ctx.strokeStyle='#7a3a0a'; ctx.lineWidth=9; ctx.lineCap='round';
   ctx.beginPath(); ctx.moveTo(bx-14,by+35); ctx.lineTo(bx-20,by-15); ctx.stroke();
@@ -483,7 +891,7 @@ function drawSlingshot() {
 
   const isAMM = currentTool === 'amm';
   let pullX=bx, pullY=by;
-  if (isDragging && dragStart && dragCurrent) {
+  if(isDragging&&dragStart&&dragCurrent){
     let dx=dragCurrent.x-dragStart.x, dy=dragCurrent.y-dragStart.y;
     const dist=Math.sqrt(dx*dx+dy*dy);
     if(dist>MAX_PULL){dx=dx/dist*MAX_PULL;dy=dy/dist*MAX_PULL;}
@@ -518,6 +926,7 @@ function drawSlingshot() {
   }
 }
 
+// ── DRAW: F-35 PLANE (HEAD version) ──
 function drawPlaneAt(x, y, angle, preview, scale=1) {
   ctx.save();
   ctx.translate(x, y); ctx.rotate(angle); ctx.scale(scale, scale);
@@ -667,54 +1076,67 @@ function drawBomb(){
   ctx.restore();
 }
 
+// ── DRAW: LEADERS ──
+function drawLeaders(){
+  leaders.forEach(leader => {
+    if(leader.state==='dead'||leader.state==='hiding') return;
+    const lx=leader.x, ly=leader.y;
+    // Body
+    ctx.fillStyle='#22224a'; ctx.fillRect(lx-5,ly-20,10,14);
+    // Head
+    ctx.fillStyle='#cc9966'; ctx.beginPath(); ctx.arc(lx,ly-26,6,0,Math.PI*2); ctx.fill();
+    // Turban
+    ctx.fillStyle='#005522';
+    ctx.beginPath(); ctx.ellipse(lx,ly-30,8,5,0,0,Math.PI*2); ctx.fill();
+    ctx.fillRect(lx-1,ly-35,2,6);
+    // Legs
+    ctx.strokeStyle='#22224a'; ctx.lineWidth=3; ctx.lineCap='round';
+    if(leader.state==='running'){
+      const leg=Math.sin(frameCount*0.35)*7;
+      ctx.beginPath(); ctx.moveTo(lx,ly-8); ctx.lineTo(lx-4+leg,ly+8); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(lx,ly-8); ctx.lineTo(lx+4-leg,ly+8); ctx.stroke();
+      // Arms swinging
+      ctx.beginPath(); ctx.moveTo(lx,ly-16); ctx.lineTo(lx+5-leg*0.5,ly-10); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(lx,ly-16); ctx.lineTo(lx-5+leg*0.5,ly-10); ctx.stroke();
+    } else {
+      // Popping: standing still, looking around
+      ctx.beginPath(); ctx.moveTo(lx,ly-8); ctx.lineTo(lx-4,ly+8); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(lx,ly-8); ctx.lineTo(lx+4,ly+8); ctx.stroke();
+      // Peeking indicator
+      const peekAlpha = 0.5+Math.sin(frameCount*0.2)*0.5;
+      ctx.fillStyle=`rgba(255,220,0,${peekAlpha})`;
+      ctx.font=`${Math.max(10,W()*0.016)}px Arial`;
+      ctx.textAlign='center';
+      ctx.fillText('!', lx, ly-38);
+    }
+  });
+}
+
+// ── DRAW: DEFENSE ENTITIES ──
 function drawTruck(){
   if(!truck) return;
-  const t=truck;
-  const x=t.x, y=t.y;
-
-  // Flatbed
+  const t=truck, x=t.x, y=t.y;
   ctx.fillStyle='#445544'; ctx.fillRect(x-55,y,110,38);
-  // Cab (right side — truck drives left, so cab is at right/front)
   ctx.fillStyle='#556655'; ctx.fillRect(x+35,y-18,30,30);
   ctx.fillStyle='#aaddff'; ctx.fillRect(x+37,y-15,24,13);
-  // Wheels
   [x-35,x-5,x+40].forEach(wx=>{
     ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(wx,y+38,13,0,Math.PI*2); ctx.fill();
     ctx.strokeStyle='#666'; ctx.lineWidth=3; ctx.stroke();
   });
-  // Driver
   ctx.save(); ctx.translate(x+50,y-16);
   ctx.fillStyle='#2a2a2a'; ctx.fillRect(-6,-6,12,14);
   ctx.fillStyle='#c8a070'; ctx.beginPath(); ctx.arc(0,-12,6,0,Math.PI*2); ctx.fill();
   ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(0,-15,7,Math.PI,Math.PI*2); ctx.fill();
   ctx.restore();
-
-  // ── MISSILE ──
-  // Engine (pivot) is fixed on truck. Nose sweeps quarter circle.
-  // angle=0: horizontal, nose left  → nosePt = (ex-L, ey)
-  // angle=90: vertical, nose up     → nosePt = (ex, ey-L)
   if(t.state==='driving'||t.state==='raising'||t.state==='ready'){
-    const e=enginePt(t);
-    const n=nosePt(t);
-
-    // bodyAngle: from engine→nose (so nose is "forward"/left visually)
+    const e=enginePt(t), n=nosePt(t);
     const dx=n.x-e.x, dy=n.y-e.y;
-    const bodyAngle=Math.atan2(dy,dx);
-    const midX=(e.x+n.x)/2, midY=(e.y+n.y)/2;
-
+    const bodyAngle=Math.atan2(dy,dx), midX=(e.x+n.x)/2, midY=(e.y+n.y)/2;
     ctx.save(); ctx.translate(midX,midY); ctx.rotate(bodyAngle);
-    // body
-    ctx.fillStyle='#cc1100';
-    ctx.beginPath(); ctx.ellipse(0,0,MISSILE_L/2,7,0,0,Math.PI*2); ctx.fill();
-    // Nose cone — sleek pointed tip outward
-    ctx.fillStyle='#dd6600';
-    ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-6); ctx.lineTo(MISSILE_L/2,6); ctx.closePath(); ctx.fill();
-    ctx.fillStyle='rgba(255,200,80,0.7)';
-    ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-3); ctx.lineTo(MISSILE_L/2+8,0); ctx.closePath(); ctx.fill();
-    // Engine nozzle at -MISSILE_L/2 (engine side)
-    ctx.fillStyle='#333';
-    ctx.beginPath(); ctx.ellipse(-MISSILE_L/2-4,0,5,9,0,0,Math.PI*2); ctx.fill();
-    // Fins near engine
+    ctx.fillStyle='#cc1100'; ctx.beginPath(); ctx.ellipse(0,0,MISSILE_L/2,7,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#dd6600'; ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-6); ctx.lineTo(MISSILE_L/2,6); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='rgba(255,200,80,0.7)'; ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-3); ctx.lineTo(MISSILE_L/2+8,0); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#333'; ctx.beginPath(); ctx.ellipse(-MISSILE_L/2-4,0,5,9,0,0,Math.PI*2); ctx.fill();
     ctx.fillStyle='#882200';
     [[-6,-8],[-6,8]].forEach(([fx,fy])=>{
       ctx.beginPath(); ctx.moveTo(-MISSILE_L/2+4,0); ctx.lineTo(-MISSILE_L/2+fx,fy); ctx.lineTo(-MISSILE_L/2-2,0); ctx.closePath(); ctx.fill();
@@ -729,17 +1151,10 @@ function drawMissiles(){
       ctx.fillStyle=`rgba(255,120,0,${i/m.trail.length*0.5})`;
       ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fill();
     });
-    ctx.save(); ctx.translate(m.x,m.y);
-    ctx.rotate(Math.atan2(m.vy,m.vx));
-    // Consistent convention: nose is on the +X side, engine on -X (matches drawTruck)
-    ctx.fillStyle='#cc1100';
-    ctx.beginPath(); ctx.ellipse(0,0,MISSILE_L/2,7,0,0,Math.PI*2); ctx.fill();
-    // Nose cone — tip points forward (+X = direction of travel)
-    ctx.fillStyle='#dd6600';
-    ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-6); ctx.lineTo(MISSILE_L/2,6); ctx.closePath(); ctx.fill();
-    ctx.fillStyle='rgba(255,200,80,0.7)';
-    ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-3); ctx.lineTo(MISSILE_L/2+8,0); ctx.closePath(); ctx.fill();
-    // Engine exhaust plume — tapered cone pointing backward (-X)
+    ctx.save(); ctx.translate(m.x,m.y); ctx.rotate(Math.atan2(m.vy,m.vx));
+    ctx.fillStyle='#cc1100'; ctx.beginPath(); ctx.ellipse(0,0,MISSILE_L/2,7,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#dd6600'; ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-6); ctx.lineTo(MISSILE_L/2,6); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='rgba(255,200,80,0.7)'; ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-3); ctx.lineTo(MISSILE_L/2+8,0); ctx.closePath(); ctx.fill();
     const fl=Math.random();
     ctx.fillStyle=`rgba(255,${100+Math.floor(fl*100)},0,0.85)`;
     ctx.beginPath(); ctx.moveTo(-MISSILE_L/2,-6); ctx.lineTo(-MISSILE_L/2,6); ctx.lineTo(-MISSILE_L/2-18-fl*8,0); ctx.closePath(); ctx.fill();
@@ -749,73 +1164,37 @@ function drawMissiles(){
   });
 }
 
-function drawHole() {
-  if (!hole) return;
-  const h = hole;
-  const gx = h.x, gy = GROUND();
-  const hW = 38, hH = 16;
-
-  // Glow ring when active (urgency ramps from yellow → red)
-  if (h.state === 'active') {
-    const pct = h.timer / h.maxTimer;
-    const pulse = 0.55 + Math.sin(frameCount * 0.3) * 0.45;
-    const gG = Math.round(pct * 200);
+function drawHole(){
+  if(!hole) return;
+  const h=hole, gx=h.x, gy=GROUND(), hW=38, hH=16;
+  if(h.state==='active'){
+    const pct=h.timer/h.maxTimer, pulse=0.55+Math.sin(frameCount*0.3)*0.45, gG=Math.round(pct*200);
     ctx.save();
-    ctx.shadowBlur = 18 + (1 - pct) * 22;
-    ctx.shadowColor = `rgb(255,${gG},0)`;
-    ctx.strokeStyle = `rgba(255,${gG},0,${(0.55 + (1-pct)*0.45) * pulse})`;
-    ctx.lineWidth = 3 + (1-pct) * 3;
-    ctx.beginPath();
-    ctx.ellipse(gx, gy+7, hW+10, hH+7, 0, 0, Math.PI*2);
-    ctx.stroke();
+    ctx.shadowBlur=18+(1-pct)*22; ctx.shadowColor=`rgb(255,${gG},0)`;
+    ctx.strokeStyle=`rgba(255,${gG},0,${(0.55+(1-pct)*0.45)*pulse})`; ctx.lineWidth=3+(1-pct)*3;
+    ctx.beginPath(); ctx.ellipse(gx,gy+7,hW+10,hH+7,0,0,Math.PI*2); ctx.stroke();
     ctx.restore();
-
-    // Countdown bar above hole
-    const barW = 68;
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(gx - barW/2, gy - 22, barW, 7);
-    ctx.fillStyle = pct > 0.55 ? '#00ee66' : pct > 0.28 ? '#ffaa00' : '#ff2200';
-    ctx.fillRect(gx - barW/2, gy - 22, barW * pct, 7);
-
-    // Warning icon
-    const iconAlpha = 0.6 + pulse * 0.4;
-    ctx.fillStyle = `rgba(255,180,0,${iconAlpha})`;
-    ctx.font = `bold ${Math.max(13, W()*0.021)}px Arial`;
-    ctx.textAlign = 'center';
-    ctx.fillText('⚠', gx, gy - 27);
+    const barW=68;
+    ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(gx-barW/2,gy-22,barW,7);
+    ctx.fillStyle=pct>0.55?'#00ee66':pct>0.28?'#ffaa00':'#ff2200';
+    ctx.fillRect(gx-barW/2,gy-22,barW*pct,7);
+    const iconAlpha=0.6+pulse*0.4;
+    ctx.fillStyle=`rgba(255,180,0,${iconAlpha})`;
+    ctx.font=`bold ${Math.max(13,W()*0.021)}px Arial`; ctx.textAlign='center';
+    ctx.fillText('⚠',gx,gy-27);
   }
-
-  // Ground patch (cover existing ground strip so hole is flush)
-  ctx.fillStyle = '#1e3010';
-  ctx.fillRect(gx - hW - 10, gy, (hW + 10)*2, 22);
-
-  // Dark hole oval
-  ctx.fillStyle = '#06060c';
-  ctx.beginPath();
-  ctx.ellipse(gx, gy+7, hW, hH, 0, 0, Math.PI*2);
-  ctx.fill();
-
-  // Rim / edge
-  ctx.strokeStyle = h.state === 'blocked' ? '#22aa44' : '#7a4012';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.ellipse(gx, gy+7, hW, hH, 0, 0, Math.PI*2);
-  ctx.stroke();
-
-  // Dirt clumps around rim
-  ctx.fillStyle = '#3a4e18';
-  [[-hW*0.75, -5], [hW*0.75, -5], [-hW*0.38, -9], [hW*0.38, -9]].forEach(([dx, dy]) => {
-    ctx.beginPath(); ctx.arc(gx+dx, gy+dy, 4, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1e3010'; ctx.fillRect(gx-hW-10,gy,(hW+10)*2,22);
+  ctx.fillStyle='#06060c'; ctx.beginPath(); ctx.ellipse(gx,gy+7,hW,hH,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle=h.state==='blocked'?'#22aa44':'#7a4012'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.ellipse(gx,gy+7,hW,hH,0,0,Math.PI*2); ctx.stroke();
+  ctx.fillStyle='#3a4e18';
+  [[-hW*0.75,-5],[hW*0.75,-5],[-hW*0.38,-9],[hW*0.38,-9]].forEach(([dx,dy])=>{
+    ctx.beginPath(); ctx.arc(gx+dx,gy+dy,4,0,Math.PI*2); ctx.fill();
   });
-
-  if (h.state === 'blocked') {
-    // Bomb wedged in hole
-    ctx.fillStyle = '#222';
-    ctx.beginPath(); ctx.ellipse(gx, gy+7, 11, 9, 0, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#00ff88';
-    ctx.font = `bold ${Math.max(13, W()*0.021)}px Arial`;
-    ctx.textAlign = 'center';
-    ctx.fillText('✓', gx, gy - 10);
+  if(h.state==='blocked'){
+    ctx.fillStyle='#222'; ctx.beginPath(); ctx.ellipse(gx,gy+7,11,9,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#00ff88'; ctx.font=`bold ${Math.max(13,W()*0.021)}px Arial`; ctx.textAlign='center';
+    ctx.fillText('✓',gx,gy-10);
   }
 }
 
@@ -829,8 +1208,9 @@ function drawExplosions(){
   });
 }
 
+// ── DRAW: WELCOME SCREEN (HEAD) ──
 function drawWelcome() {
-  drawBg();
+  drawDefenseBg();
   // Atmospheric overlay
   const ov = ctx.createLinearGradient(0, 0, 0, H());
   ov.addColorStop(0,   'rgba(5,5,20,0.65)');
@@ -889,26 +1269,202 @@ function drawWelcome() {
   }
 }
 
-function draw(){
-  ctx.clearRect(0,0,W(),H());
-  drawBg();
-  drawFlags();
-  drawHUD();
-  drawSlingshot();
-  drawTruck();
-  drawHole();
-  drawMissiles();
-  drawPlane();
-  drawAMM();
-  drawBomb();
-  drawExplosions();
+// ── DRAW: GET READY SCREEN (BRANCH) ──
+function drawGetReady(){
+  const type = getLevelType(currentStage);
+  if(type==='attack') drawAttackBg(); else drawDefenseBg();
+  // Dark overlay
+  ctx.fillStyle='rgba(0,0,0,0.78)'; ctx.fillRect(0,0,W(),H());
+
+  const cy=H()/2, def=LEVEL_DEFS[type];
+
+  // Stage number
+  ctx.fillStyle='rgba(255,255,255,0.55)';
+  ctx.font=`${Math.max(14,W()*0.022)}px Arial`; ctx.textAlign='center';
+  ctx.fillText(`שלב ${currentStage}`, W()/2, cy-115);
+
+  // Level type (big, coloured)
+  ctx.fillStyle=def.color;
+  ctx.font=`bold ${Math.max(40,W()*0.072)}px Arial`;
+  ctx.fillText(def.nameHe, W()/2, cy-45);
+
+  // Subtitle (city name or label)
+  ctx.fillStyle='rgba(255,220,140,0.95)';
+  ctx.font=`bold ${Math.max(18,W()*0.032)}px Arial`;
+  ctx.fillText(def.getSubtitle(currentStage), W()/2, cy+8);
+
+  // Separator
+  ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(W()/2-160,cy+24); ctx.lineTo(W()/2+160,cy+24); ctx.stroke();
+
+  // Instructions
+  ctx.fillStyle='rgba(255,255,255,0.8)';
+  ctx.font=`${Math.max(13,W()*0.021)}px Arial`;
+  def.instructionsHe.forEach((line,i)=>{
+    ctx.fillText(line, W()/2, cy+50+i*30);
+  });
+
+  // Pulsing tap prompt
+  const pulse=0.55+Math.sin(frameCount*0.08)*0.45;
+  ctx.fillStyle=`rgba(255,220,50,${pulse})`;
+  ctx.font=`bold ${Math.max(15,W()*0.026)}px Arial`;
+  ctx.fillText('לחץ להתחיל ▶', W()/2, cy+160);
 }
 
-function loop(){
-  if (gameState === 'welcome') { drawWelcome(); }
-  else { update(); draw(); }
-  requestAnimationFrame(loop);
+function drawStageClear(){
+  ctx.fillStyle='rgba(0,0,0,0.68)'; ctx.fillRect(0,0,W(),H());
+  ctx.fillStyle='#44ff88';
+  ctx.font=`bold ${Math.max(30,W()*0.055)}px Arial`; ctx.textAlign='center';
+  ctx.fillText('✓ שלב הושלם!', W()/2, H()/2-22);
+  if(getLevelType(currentStage)==='attack'){
+    ctx.fillStyle='rgba(255,255,255,0.8)';
+    ctx.font=`${Math.max(15,W()*0.026)}px Arial`;
+    ctx.fillText(`${leadersHit} מנהיגים חוסלו מתוך 10`, W()/2, H()/2+25);
+  }
+  ctx.fillStyle='rgba(255,220,80,0.7)';
+  ctx.font=`${Math.max(12,W()*0.019)}px Arial`;
+  ctx.fillText('מתכונן לשלב הבא...', W()/2, H()/2+62);
 }
+
+// ── MAIN DRAW ──
+function draw(){
+  ctx.clearRect(0,0,W(),H());
+
+  if(gameState==='welcome'){ drawWelcome(); return; }
+  if(gameState==='getReady'){ drawGetReady(); return; }
+
+  const type=getLevelType(currentStage);
+  if(type==='defense'){
+    drawDefenseBg();
+    drawFlags();
+    drawHole();
+    drawTruck();
+    drawMissiles();
+    drawSlingshot();
+    drawPlane();
+    drawAMM();
+    drawBomb();
+    drawExplosions();
+    drawDefenseHUD();
+  } else {
+    drawAttackBg();
+    drawFlags();
+    drawLeaders();
+    drawSlingshot();
+    drawPlane();
+    drawBomb();
+    drawExplosions();
+    drawAttackHUD();
+  }
+
+  if(gameState==='stageClear') drawStageClear();
+}
+
+// ── LEADERBOARD (SimpleBoards) ──
+// Note: API key is visible here since this is a client-side game — acceptable
+// given the 10-entry cap and write-only nature of the key.
+const LB_API  = 'https://api.simpleboards.dev/api';
+const LB_KEY  = '672d6709-bf5d-4743-bb11-0fc595229f17';
+const LB_ID   = '154fce9d-2cdf-4c00-4ad1-08de7968d479';
+
+function lbShowOverlay(finalScore) {
+  document.getElementById('lbFinalScore').textContent = finalScore;
+  const savedName = localStorage.getItem('lionRoarPlayerName') || '';
+  document.getElementById('nameInput').value = savedName;
+  document.getElementById('lbStatus').textContent = '';
+  document.getElementById('lbTable').style.display = 'none';
+  document.getElementById('lbPlayAgain').style.display = 'none';
+  document.getElementById('lbSubmitBtn').style.display = '';
+  document.getElementById('lbSkipBtn').style.display = '';
+  document.getElementById('lbSubmitBtn').disabled = false;
+  document.getElementById('lbSubmitBtn').textContent = '📤 שלח ניקוד';
+  document.getElementById('lbOverlay').style.display = 'flex';
+  setTimeout(() => document.getElementById('nameInput').focus(), 120);
+}
+
+async function lbSubmit() {
+  const name = document.getElementById('nameInput').value.trim();
+  if (!name) { document.getElementById('nameInput').focus(); return; }
+
+  localStorage.setItem('lionRoarPlayerName', name);
+  const btn = document.getElementById('lbSubmitBtn');
+  btn.textContent = '⏳ שולח...'; btn.disabled = true;
+  document.getElementById('lbSkipBtn').style.display = 'none';
+  document.getElementById('lbStatus').textContent = '';
+
+  try {
+    const res = await fetch(`${LB_API}/entries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': LB_KEY },
+      body: JSON.stringify({ leaderboardId: LB_ID, playerDisplayName: name, score: String(score) })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    document.getElementById('lbStatus').textContent = '✅ נשלח בהצלחה!';
+  } catch {
+    document.getElementById('lbStatus').textContent = '⚠️ שגיאה בשליחה — מציג טבלה ישירות';
+  }
+
+  btn.style.display = 'none';
+  await lbFetch();
+}
+
+function lbSkip() {
+  document.getElementById('lbSubmitBtn').style.display = 'none';
+  document.getElementById('lbSkipBtn').style.display = 'none';
+  document.getElementById('lbStatus').textContent = '';
+  lbFetch();
+}
+
+async function lbFetch() {
+  const table = document.getElementById('lbTable');
+  const entriesDiv = document.getElementById('lbEntries');
+  table.style.display = 'block';
+  entriesDiv.innerHTML = '<div style="color:#888;text-align:center;padding:8px">טוען...</div>';
+
+  try {
+    const res = await fetch(`${LB_API}/leaderboards/${LB_ID}/entries`, {
+      headers: { 'x-api-key': LB_KEY }
+    });
+    const data = await res.json();
+    // API returns array sorted by rank
+    const entries = Array.isArray(data) ? data : (data.entries || data.data || []);
+    if (entries.length === 0) {
+      entriesDiv.innerHTML = '<div style="color:#888;text-align:center;padding:8px">אין רשומות עדיין</div>';
+    } else {
+      const medals = ['🥇','🥈','🥉'];
+      entriesDiv.innerHTML = entries.slice(0, 10).map((e, i) => {
+        const rank = medals[i] || `${i+1}.`;
+        const name = (e.playerDisplayName || e.name || 'Unknown')
+          .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return `<div class="lb-row">
+          <span class="rank">${rank}</span>
+          <span class="pname">${name}</span>
+          <span class="pscore">${e.score}</span>
+        </div>`;
+      }).join('');
+    }
+  } catch {
+    entriesDiv.innerHTML = '<div style="color:#f87;text-align:center;padding:8px">לא ניתן לטעון את הטבלה</div>';
+  }
+
+  document.getElementById('lbPlayAgain').style.display = '';
+}
+
+function lbPlayAgain() {
+  document.getElementById('lbOverlay').style.display = 'none';
+  resetGame();
+}
+
+// Enter key in name input triggers submit
+document.getElementById('nameInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') lbSubmit();
+});
+
+// ── BOOT ──
+// Pre-generate buildings for stage 1 (attack) so get ready screen shows city
+attackBuildings = generateBuildings(1);
+
+function loop(){ update(); draw(); requestAnimationFrame(loop); }
 loop();
 </script>
 </body>
