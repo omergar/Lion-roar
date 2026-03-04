@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Lion's Roar</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -243,8 +246,14 @@ function drawIsraelFlag(x, y, w, h) {
 // ── INPUT ──
 function getXY(e) { return { x: e.clientX ?? e.pageX, y: e.clientY ?? e.pageY }; }
 
+function tryFullscreen() {
+  const el = document.documentElement;
+  if (el.requestFullscreen) el.requestFullscreen().catch(()=>{});
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+}
+
 function onDown(e) {
-  if (gameState === 'welcome') { gameState = 'getReady'; return; }
+  if (gameState === 'welcome') { tryFullscreen(); gameState = 'getReady'; return; }
   if (gameState === 'getReady') { startStage(); return; }
   if (gameState === 'gameOver') return; // overlay handles restart
   if (gameState === 'stageClear') return;
