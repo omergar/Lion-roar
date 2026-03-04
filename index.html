@@ -2,7 +2,8 @@
 <html lang="he">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<link rel="manifest" href="manifest.json">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -253,7 +254,7 @@ function tryFullscreen() {
 }
 
 function onDown(e) {
-  if (gameState === 'welcome') { tryFullscreen(); gameState = 'getReady'; return; }
+  if (gameState === 'welcome') { gameState = 'getReady'; return; }
   if (gameState === 'getReady') { startStage(); return; }
   if (gameState === 'gameOver') return; // overlay handles restart
   if (gameState === 'stageClear') return;
@@ -277,6 +278,25 @@ c.addEventListener('mouseup', onUp);
 c.addEventListener('touchstart', e=>{e.preventDefault();onDown(e.touches[0]);},{passive:false});
 c.addEventListener('touchmove',  e=>{e.preventDefault();onMove(e.touches[0]);},{passive:false});
 c.addEventListener('touchend',   e=>{e.preventDefault();onUp(e.changedTouches[0]);},{passive:false});
+
+// Fullscreen: trigger on touchend/click (safer for Chrome user-activation model)
+function attachFullscreenTrigger() {
+  function handler() {
+    if (gameState === 'welcome' || gameState === 'getReady') {
+      tryFullscreen();
+    }
+    c.removeEventListener('touchend', handler);
+    c.removeEventListener('click', handler);
+  }
+  c.addEventListener('touchend', handler, { once: true });
+  c.addEventListener('click', handler, { once: true });
+}
+attachFullscreenTrigger();
+
+// Resize canvas after fullscreen transition completes
+['fullscreenchange', 'webkitfullscreenchange'].forEach(ev =>
+  document.addEventListener(ev, () => { setTimeout(resize, 100); })
+);
 window.addEventListener('keydown', e => {
   if (gameState === 'welcome') { gameState = 'getReady'; }
   else if (gameState === 'getReady') { startStage(); }
@@ -284,6 +304,7 @@ window.addEventListener('keydown', e => {
 
 // ── TOOL SELECTION ──
 function pickTool() {
+  if (getLevelType(currentStage) === 'attack') return 'plane';
   // Offer AMM when enemy missiles are airborne (60% chance), else occasionally (20%)
   if (missiles.length > 0 && Math.random() < 0.6) return 'amm';
   if (Math.random() < 0.2) return 'amm';
@@ -301,7 +322,7 @@ function launchPlane(angle) {
     amm = { x: BASE().x, y: BASE().y, vx: Math.cos(a)*15, vy: -Math.sin(a)*15, trail: [] };
     phase = 'amm_flying';
   } else {
-    plane = { x: BASE().x, y: BASE().y, vx: Math.cos(a)*10, vy: -Math.sin(a)*10, hasBomb: true, trail: [] };
+    plane = { x: BASE().x, y: BASE().y, vx: Math.cos(a)*9, vy: -Math.sin(a)*9, hasBomb: true, trail: [] };
     phase = 'flying';
   }
 }
@@ -418,7 +439,10 @@ function fireMissile() {
 // ── DEFENSE: UPDATE ──
 function updateDefense() {
   defenseFrameCount++;
-  if (defenseFrameCount >= DEFENSE_STAGE_DURATION) { enterStageClear(); return; }
+  if (defenseFrameCount >= DEFENSE_STAGE_DURATION) {
+    const threatsActive = missiles.length > 0 || truck !== null || hole !== null;
+    if (!threatsActive) { enterStageClear(); return; }
+  }
 
   if (frameCount >= nextSpawn && !truck && !hole) {
     if (Math.random() < 0.35) spawnHole(); else spawnTruck();
@@ -497,11 +521,12 @@ function seededRand(seed) { const x = Math.sin(seed+1)*10000; return x - Math.fl
 function generateBuildings(stage) {
   const buildings = [];
   const count = 7;
-  const margin = 110;
-  const spacing = (W() - margin * 2) / count;
+  const startX = W() / 3;
+  const endX = W() - 60;
+  const spacing = (endX - startX) / count;
   for (let i = 0; i < count; i++) {
     const isBunker = seededRand(stage * 17 + i + 50) < 0.28;
-    const bx = margin + (i + 0.5) * spacing + (seededRand(stage * 13 + i) - 0.5) * spacing * 0.28;
+    const bx = startX + (i + 0.5) * spacing + (seededRand(stage * 13 + i) - 0.5) * spacing * 0.28;
     const bh = isBunker
       ? 38 + seededRand(stage * 11 + i + 200) * 28
       : 65 + seededRand(stage * 11 + i + 200) * 95;
@@ -525,7 +550,7 @@ function initAttack() {
       type: Math.random() < 0.6 ? 'runner' : 'popper',
       currentBuilding: bIdx,
       x: attackBuildings[bIdx].x,
-      y: GROUND() - 30,
+      y: GROUND() - 8,
       targetX: 0, targetBuilding: -1,
       moveTimer: 200 + Math.floor(Math.random() * 220),
       popTimer: 0,
@@ -554,7 +579,7 @@ function updateAttack() {
           leader.state = 'popping';
           leader.popTimer = 28 + Math.floor(Math.random() * 32);
           leader.x = attackBuildings[leader.currentBuilding].x;
-          leader.y = GROUND() - 32;
+          leader.y = GROUND() - 8;
         }
       }
     } else if (leader.state === 'running') {
@@ -568,7 +593,7 @@ function updateAttack() {
         leader.moveTimer = 200 + Math.floor(Math.random() * 220);
       } else {
         leader.x += Math.sign(dx) * speed;
-        leader.y = GROUND() - 30;
+        leader.y = GROUND() - 8;
       }
     } else if (leader.state === 'popping') {
       leader.popTimer--;
@@ -603,8 +628,8 @@ function checkAttackBombHit(bx) {
       if (killed > 0) {
         leadersHit += killed; score += killed;
         addExplosion(b.x, GROUND() - b.height * 0.5, true);
-        if (killed >= 3) showMsg(`🔥 ${killed} מנהיגים!! גאוני`, '#ffdd00');
-        else if (killed === 2) showMsg(`💥 ${killed} מנהיגים`, '#ff8800');
+        if (killed >= 3) showMsg(`🔥 מנהיגים!! גאוני ${killed}`, '#ffdd00');
+        else if (killed === 2) showMsg(`💥 מנהיגים ${killed}`, '#ff8800');
         else showMsg('💥 מנהיג חוסל', '#ff8800');
       } else {
         addExplosion(bx, GROUND(), false);
@@ -690,7 +715,8 @@ function update() {
   if (plane) {
     plane.trail.push({x:plane.x,y:plane.y});
     if (plane.trail.length>35) plane.trail.shift();
-    plane.vy += 0.04; plane.x += plane.vx; plane.y += plane.vy;
+    plane.vy += 0.04; if (plane.vy > 0) plane.vy = 0; // level off at apex, don't descend
+    plane.x += plane.vx; plane.y += plane.vy;
     if (plane.x > W()+100 || plane.y > H()+100) resetPlane();
   }
 
@@ -923,12 +949,64 @@ function drawAttackHUD() {
 // ── DRAW: SLINGSHOT / PLANE / BOMB (shared) ──
 function drawSlingshot(){
   const bx=BASE().x, by=BASE().y;
-  ctx.strokeStyle='#7a3a0a'; ctx.lineWidth=9; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(bx-14,by+35); ctx.lineTo(bx-20,by-15); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(bx+14,by+35); ctx.lineTo(bx+20,by-15); ctx.stroke();
-  ctx.lineWidth=14;
-  ctx.beginPath(); ctx.moveTo(bx,by+35); ctx.lineTo(bx,by+65); ctx.stroke();
 
+  // ── Handle (draw first, behind prongs) ──
+  const hg = ctx.createLinearGradient(bx-8,0,bx+8,0);
+  hg.addColorStop(0,'#1e0a00'); hg.addColorStop(0.3,'#7a3a0a');
+  hg.addColorStop(0.7,'#5a2a08'); hg.addColorStop(1,'#1e0a00');
+  ctx.fillStyle=hg;
+  ctx.beginPath();
+  ctx.moveTo(bx-6,by+38); ctx.lineTo(bx-8,by+66);
+  ctx.lineTo(bx+8,by+66); ctx.lineTo(bx+6,by+38);
+  ctx.closePath(); ctx.fill();
+  // Grip wraps
+  ctx.strokeStyle='rgba(0,0,0,0.22)'; ctx.lineWidth=2; ctx.lineCap='butt';
+  for(let i=0;i<5;i++){
+    const wy=by+42+i*5;
+    ctx.beginPath(); ctx.moveTo(bx-8,wy); ctx.lineTo(bx+8,wy); ctx.stroke();
+  }
+
+  // ── Left prong (filled wood shape) ──
+  const lpg=ctx.createLinearGradient(bx-22,by-18,bx-2,by+38);
+  lpg.addColorStop(0,'#6b2f05'); lpg.addColorStop(0.3,'#9b4f18');
+  lpg.addColorStop(0.65,'#7a3a0a'); lpg.addColorStop(1,'#4a2005');
+  ctx.fillStyle=lpg; ctx.lineCap='round';
+  ctx.beginPath();
+  ctx.moveTo(bx-2,by+38);
+  ctx.quadraticCurveTo(bx-8,by+12,bx-17,by-12);
+  ctx.lineTo(bx-24,by-15);
+  ctx.quadraticCurveTo(bx-14,by+8,bx-8,by+32);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='rgba(200,145,70,0.38)'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(bx-5,by+34);
+  ctx.quadraticCurveTo(bx-10,by+10,bx-19,by-12); ctx.stroke();
+
+  // ── Right prong ──
+  const rpg=ctx.createLinearGradient(bx+22,by-18,bx+2,by+38);
+  rpg.addColorStop(0,'#6b2f05'); rpg.addColorStop(0.3,'#9b4f18');
+  rpg.addColorStop(0.65,'#7a3a0a'); rpg.addColorStop(1,'#4a2005');
+  ctx.fillStyle=rpg;
+  ctx.beginPath();
+  ctx.moveTo(bx+2,by+38);
+  ctx.quadraticCurveTo(bx+8,by+12,bx+17,by-12);
+  ctx.lineTo(bx+24,by-15);
+  ctx.quadraticCurveTo(bx+14,by+8,bx+8,by+32);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='rgba(200,145,70,0.38)'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(bx+5,by+34);
+  ctx.quadraticCurveTo(bx+10,by+10,bx+19,by-12); ctx.stroke();
+
+  // Fork-tip caps
+  ctx.fillStyle='#5a2a08';
+  ctx.beginPath(); ctx.arc(bx-20,by-15,5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1e0a00';
+  ctx.beginPath(); ctx.arc(bx-20,by-15,2.5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#5a2a08';
+  ctx.beginPath(); ctx.arc(bx+20,by-15,5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1e0a00';
+  ctx.beginPath(); ctx.arc(bx+20,by-15,2.5,0,Math.PI*2); ctx.fill();
+
+  // ── Elastic + projectile ──
   const isAMM = currentTool === 'amm';
   let pullX=bx, pullY=by;
   if(isDragging&&dragStart&&dragCurrent){
@@ -936,9 +1014,12 @@ function drawSlingshot(){
     const dist=Math.sqrt(dx*dx+dy*dy);
     if(dist>MAX_PULL){dx=dx/dist*MAX_PULL;dy=dy/dist*MAX_PULL;}
     pullX=bx+Math.min(0,dx); pullY=by+dy;
-    ctx.strokeStyle=isAMM?'#00ccff':'#cc9944'; ctx.lineWidth=3;
+    ctx.strokeStyle=isAMM?'#00ccff':'#cc9944'; ctx.lineWidth=3.5; ctx.lineCap='round';
     ctx.beginPath(); ctx.moveTo(bx-20,by-15); ctx.lineTo(pullX,pullY); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(bx+20,by-15); ctx.lineTo(pullX,pullY); ctx.stroke();
+    // Leather pouch
+    ctx.fillStyle='#5a3010'; ctx.strokeStyle='#3a1a00'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.ellipse(pullX,pullY,8,5,0,0,Math.PI*2); ctx.fill(); ctx.stroke();
     if (isAMM) drawAMMAt(pullX,pullY,true); else drawPlaneAt(pullX,pullY,0,true);
     const adx=pullX-bx, ady=pullY-by;
     const ang=Math.atan2(ady,-adx);
@@ -946,115 +1027,154 @@ function drawSlingshot(){
       ctx.strokeStyle=isAMM?'rgba(0,220,255,0.35)':'rgba(100,200,255,0.3)';
       ctx.lineWidth=1.5; ctx.setLineDash([5,8]);
       ctx.beginPath();
-      // AMM: faster (15) + near-zero gravity (0.015); plane: speed 10 + gravity 0.04
       let px=bx,py=by,
-          pvx=Math.cos(ang)*(isAMM?15:10),
-          pvy=-Math.sin(ang)*(isAMM?15:10);
+          pvx=Math.cos(ang)*(isAMM?15:9),
+          pvy=-Math.sin(ang)*(isAMM?15:9);
       ctx.moveTo(px,py);
       for(let i=0;i<140;i++){
-        pvy+=(isAMM?0.015:0.04);px+=pvx;py+=pvy;
+        pvy+=(isAMM?0.015:0.04); if(!isAMM&&pvy>0)pvy=0;
+        px+=pvx;py+=pvy;
         ctx.lineTo(px,py);
         if(px>W()||py>GROUND()||py<-50)break;
       }
       ctx.stroke(); ctx.setLineDash([]);
     }
   } else if(phase==='aim'){
-    ctx.strokeStyle=isAMM?'#00ccff':'#cc9944'; ctx.lineWidth=3;
+    ctx.strokeStyle=isAMM?'#00ccff':'#cc9944'; ctx.lineWidth=3; ctx.lineCap='round';
     ctx.beginPath(); ctx.moveTo(bx-20,by-15); ctx.lineTo(bx,by); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(bx+20,by-15); ctx.lineTo(bx,by); ctx.stroke();
+    ctx.fillStyle='#5a3010'; ctx.strokeStyle='#3a1a00'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.ellipse(bx,by,8,5,0,0,Math.PI*2); ctx.fill(); ctx.stroke();
     if (isAMM) drawAMMAt(bx,by,false); else drawPlaneAt(bx,by,0,false);
   }
 }
 
-// ── DRAW: F-35 PLANE (HEAD version) ──
+// ── DRAW: F-35 PLANE ──
 function drawPlaneAt(x, y, angle, preview, scale=1) {
   ctx.save();
   ctx.translate(x, y); ctx.rotate(angle); ctx.scale(scale, scale);
   const al = preview ? 0.6 : 1.0;
 
-  // Engine exhaust glow (behind nozzle at -x)
+  // Engine exhaust — orange outer flame + blue-white core
   if (!preview) {
     const fl = 0.65 + Math.random() * 0.35;
-    const eg = ctx.createRadialGradient(-32, 0, 0, -36, 0, 20);
-    eg.addColorStop(0, `rgba(125,249,255,${fl * 0.95})`);
-    eg.addColorStop(0.45, `rgba(131,56,236,${fl * 0.5})`);
-    eg.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = eg;
-    ctx.beginPath(); ctx.ellipse(-38, 0, 20, 9, 0, 0, Math.PI*2); ctx.fill();
+    const og = ctx.createRadialGradient(-34,0,0,-44,0,20);
+    og.addColorStop(0,   `rgba(255,210,60,${fl*0.92})`);
+    og.addColorStop(0.3, `rgba(255,110,15,${fl*0.70})`);
+    og.addColorStop(0.6, `rgba(255,30,0,${fl*0.40})`);
+    og.addColorStop(1,   'rgba(0,0,0,0)');
+    ctx.fillStyle=og; ctx.beginPath(); ctx.ellipse(-44,0,22,8,0,0,Math.PI*2); ctx.fill();
+    const ic = ctx.createRadialGradient(-31,0,0,-31,0,9);
+    ic.addColorStop(0,   `rgba(235,250,255,${fl})`);
+    ic.addColorStop(0.4, `rgba(110,195,255,${fl*0.80})`);
+    ic.addColorStop(1,   'rgba(0,0,0,0)');
+    ctx.fillStyle=ic; ctx.beginPath(); ctx.ellipse(-31,0,10,5,0,0,Math.PI*2); ctx.fill();
   }
 
-  // Main delta wing (below fuselage, swept backward)
-  const wg = ctx.createLinearGradient(5, 3, -24, 22);
-  wg.addColorStop(0,    `rgba(0,245,212,${al})`);
-  wg.addColorStop(0.55, `rgba(0,187,249,${al})`);
-  wg.addColorStop(1,    `rgba(67,97,238,${al})`);
-  ctx.fillStyle = wg;
+  // Main delta wing
+  const wg = ctx.createLinearGradient(7,5,-26,27);
+  wg.addColorStop(0,   `rgba(0,245,212,${al})`);
+  wg.addColorStop(0.5, `rgba(0,187,249,${al})`);
+  wg.addColorStop(1,   `rgba(67,97,238,${al})`);
+  ctx.fillStyle=wg;
   ctx.beginPath();
-  ctx.moveTo(5, 4); ctx.lineTo(-22, 22); ctx.lineTo(-26, 17); ctx.lineTo(-8, 4);
+  ctx.moveTo(7,5); ctx.lineTo(-8,6); ctx.lineTo(-26,27); ctx.lineTo(-24,22); ctx.lineTo(-6,6);
+  ctx.closePath(); ctx.fill();
+  // Wing leading-edge highlight
+  ctx.strokeStyle=`rgba(140,240,235,${al*0.5})`; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(7,5); ctx.lineTo(-26,27); ctx.stroke();
+  // Wing panel line
+  ctx.strokeStyle=`rgba(0,80,180,${al*0.3})`; ctx.lineWidth=0.5;
+  ctx.beginPath(); ctx.moveTo(2,6); ctx.lineTo(-14,18); ctx.stroke();
+
+  // Horizontal stabilizer
+  const stg = ctx.createLinearGradient(-20,5,-32,17);
+  stg.addColorStop(0,`rgba(0,220,200,${al})`); stg.addColorStop(1,`rgba(60,90,230,${al})`);
+  ctx.fillStyle=stg;
+  ctx.beginPath();
+  ctx.moveTo(-20,5); ctx.lineTo(-28,5); ctx.lineTo(-32,16); ctx.lineTo(-29,18); ctx.lineTo(-22,7);
   ctx.closePath(); ctx.fill();
 
-  // Horizontal stabilizer (small tailplane at rear)
-  const tg = ctx.createLinearGradient(-18, 3, -30, 13);
-  tg.addColorStop(0,    `rgba(255,190,11,${al})`);
-  tg.addColorStop(0.45, `rgba(251,86,7,${al})`);
-  tg.addColorStop(1,    `rgba(255,0,110,${al})`);
-  ctx.fillStyle = tg;
+  // Vertical tail fin
+  const vfg = ctx.createLinearGradient(-16,-6,-27,-22);
+  vfg.addColorStop(0,`rgba(0,225,205,${al})`); vfg.addColorStop(1,`rgba(65,85,235,${al})`);
+  ctx.fillStyle=vfg;
   ctx.beginPath();
-  ctx.moveTo(-18, 4); ctx.lineTo(-28, 14); ctx.lineTo(-30, 11); ctx.lineTo(-22, 4);
+  ctx.moveTo(-16,-6); ctx.lineTo(-27,-22); ctx.lineTo(-30,-17); ctx.lineTo(-19,-6);
   ctx.closePath(); ctx.fill();
+  ctx.strokeStyle=`rgba(140,240,235,${al*0.4})`; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(-16,-6); ctx.lineTo(-27,-22); ctx.stroke();
 
-  // Vertical fin (sticks up at tail)
-  const fg = ctx.createLinearGradient(-14, -7, -25, -22);
-  fg.addColorStop(0,    `rgba(128,255,219,${al})`);
-  fg.addColorStop(0.35, `rgba(100,223,223,${al})`);
-  fg.addColorStop(1,    `rgba(94,96,206,${al})`);
-  ctx.fillStyle = fg;
+  // Fuselage — aerodynamic bezier path with rainbow gradient
+  const fsg = ctx.createLinearGradient(-28,0,28,0);
+  fsg.addColorStop(0,   `rgba(255,77,109,${al})`);
+  fsg.addColorStop(0.22,`rgba(255,159,28,${al})`);
+  fsg.addColorStop(0.38,`rgba(255,230,109,${al})`);
+  fsg.addColorStop(0.58,`rgba(46,196,182,${al})`);
+  fsg.addColorStop(0.78,`rgba(58,134,255,${al})`);
+  fsg.addColorStop(1,   `rgba(131,56,236,${al})`);
+  ctx.fillStyle=fsg;
   ctx.beginPath();
-  ctx.moveTo(-14, -7); ctx.lineTo(-24, -22); ctx.lineTo(-27, -18); ctx.lineTo(-16, -7);
+  ctx.moveTo(36,0);
+  ctx.bezierCurveTo(28,-2,14,-8,0,-8);
+  ctx.bezierCurveTo(-16,-8,-26,-6,-30,-3);
+  ctx.lineTo(-30,3);
+  ctx.bezierCurveTo(-26,6,-16,8,0,8);
+  ctx.bezierCurveTo(14,8,28,2,36,0);
   ctx.closePath(); ctx.fill();
+  // Top gloss
+  ctx.fillStyle=`rgba(255,255,255,${al*0.13})`;
+  ctx.beginPath(); ctx.ellipse(2,-4,22,3,0,0,Math.PI*2); ctx.fill();
+  // Air intake scoop
+  ctx.fillStyle=`rgba(15,15,35,${al*0.80})`;
+  ctx.beginPath(); ctx.moveTo(12,8); ctx.lineTo(0,8); ctx.lineTo(-2,10); ctx.lineTo(10,10); ctx.closePath(); ctx.fill();
 
-  // Fuselage (rainbow gradient body)
-  const bg = ctx.createLinearGradient(-28, 0, 28, 0);
-  bg.addColorStop(0,    `rgba(255,77,109,${al})`);
-  bg.addColorStop(0.22, `rgba(255,159,28,${al})`);
-  bg.addColorStop(0.38, `rgba(255,230,109,${al})`);
-  bg.addColorStop(0.58, `rgba(46,196,182,${al})`);
-  bg.addColorStop(0.78, `rgba(58,134,255,${al})`);
-  bg.addColorStop(1,    `rgba(131,56,236,${al})`);
-  ctx.fillStyle = bg;
-  ctx.beginPath(); ctx.ellipse(0, 0, 28, 8, 0, 0, Math.PI*2); ctx.fill();
-  // Top highlight
-  ctx.fillStyle = `rgba(255,255,255,${al * 0.10})`;
-  ctx.beginPath(); ctx.ellipse(2, -3, 22, 4, 0, 0, Math.PI*2); ctx.fill();
+  // ── Cockpit canopy (most improved) ──
+  // Dark outer frame
+  ctx.fillStyle=`rgba(12,12,38,${al})`;
+  ctx.beginPath(); ctx.ellipse(13,-7,13,7,-0.08,0,Math.PI*2); ctx.fill();
+  // Blue-tinted glass dome
+  const cg = ctx.createLinearGradient(5,-17,23,-4);
+  cg.addColorStop(0,   `rgba(150,225,255,${al*0.92})`);
+  cg.addColorStop(0.28,`rgba(70,155,240,${al*0.78})`);
+  cg.addColorStop(0.62,`rgba(25,75,180,${al*0.55})`);
+  cg.addColorStop(1,   `rgba(8,22,90,${al*0.28})`);
+  ctx.fillStyle=cg;
+  ctx.beginPath(); ctx.ellipse(13,-8,11,6,-0.08,0,Math.PI*2); ctx.fill();
+  // Primary glare streak
+  ctx.fillStyle=`rgba(255,255,255,${al*0.62})`;
+  ctx.beginPath(); ctx.ellipse(8,-13,6,2.2,-0.35,0,Math.PI*2); ctx.fill();
+  // Secondary specular dot
+  ctx.fillStyle=`rgba(255,255,255,${al*0.38})`;
+  ctx.beginPath(); ctx.arc(19,-10,2,0,Math.PI*2); ctx.fill();
+  // Canopy frame divider
+  ctx.strokeStyle=`rgba(80,130,210,${al*0.55})`; ctx.lineWidth=1.2;
+  ctx.beginPath(); ctx.moveTo(13,-15); ctx.lineTo(13,-1); ctx.stroke();
+  // Front windshield edge
+  ctx.strokeStyle=`rgba(120,180,255,${al*0.40})`; ctx.lineWidth=0.8;
+  ctx.beginPath(); ctx.moveTo(22,-8); ctx.quadraticCurveTo(22,-2,14,-1); ctx.stroke();
 
-  // Nose cone (pointing right, +x)
-  const nc = ctx.createLinearGradient(20, 0, 38, 0);
-  nc.addColorStop(0, `rgba(220,230,255,${al})`);
-  nc.addColorStop(1, `rgba(155,246,255,${al})`);
-  ctx.fillStyle = nc;
-  ctx.beginPath();
-  ctx.moveTo(38, 0); ctx.lineTo(22, -5); ctx.lineTo(22, 5);
-  ctx.closePath(); ctx.fill();
+  // Nose cone
+  const nc = ctx.createLinearGradient(28,-2,40,0);
+  nc.addColorStop(0,`rgba(200,220,255,${al})`); nc.addColorStop(1,`rgba(240,252,255,${al})`);
+  ctx.fillStyle=nc;
+  ctx.beginPath(); ctx.moveTo(40,0); ctx.lineTo(27,-4); ctx.lineTo(27,4); ctx.closePath(); ctx.fill();
+  // Radar dome tip
+  ctx.fillStyle=`rgba(55,65,120,${al})`;
+  ctx.beginPath(); ctx.arc(38,0,2.5,0,Math.PI*2); ctx.fill();
 
-  // Canopy (dome above fuselage, near nose)
-  const cg = ctx.createLinearGradient(8, -16, 20, -8);
-  cg.addColorStop(0, `rgba(125,249,255,${al * 0.85})`);
-  cg.addColorStop(1, `rgba(131,56,236,${al * 0.65})`);
-  ctx.fillStyle = cg;
-  ctx.beginPath(); ctx.ellipse(12, -9, 10, 5, -0.15, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = `rgba(255,255,255,${al * 0.25})`;
-  ctx.beginPath(); ctx.ellipse(10, -12, 4, 2, -0.2, 0, Math.PI*2); ctx.fill();
-
-  // Engine nozzle (at rear, -x)
-  ctx.fillStyle = preview ? `rgba(50,50,50,${al})` : '#2a2a2a';
-  ctx.beginPath(); ctx.ellipse(-26, 0, 8, 5, 0, 0, Math.PI*2); ctx.fill();
+  // Engine nozzle
+  ctx.fillStyle=`rgba(22,22,44,${al})`;
+  ctx.beginPath(); ctx.ellipse(-28,0,9,5.5,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=`rgba(50,50,80,${al})`;
+  ctx.beginPath(); ctx.ellipse(-28,0,6,3.5,0,0,Math.PI*2); ctx.fill();
   if (!preview) {
-    const nz = ctx.createRadialGradient(-26, 0, 0, -26, 0, 6);
-    nz.addColorStop(0, 'rgba(125,249,255,0.9)');
-    nz.addColorStop(0.5, 'rgba(131,56,236,0.4)');
-    nz.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = nz;
-    ctx.beginPath(); ctx.ellipse(-26, 0, 6, 4, 0, 0, Math.PI*2); ctx.fill();
+    const nz = ctx.createRadialGradient(-28,0,0,-28,0,7);
+    nz.addColorStop(0,  'rgba(255,210,80,1)');
+    nz.addColorStop(0.4,'rgba(255,100,20,0.7)');
+    nz.addColorStop(1,  'rgba(0,0,0,0)');
+    ctx.fillStyle=nz;
+    ctx.beginPath(); ctx.ellipse(-28,0,6,3.5,0,0,Math.PI*2); ctx.fill();
   }
 
   ctx.restore();

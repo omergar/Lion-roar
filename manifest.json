@@ -1,0 +1,9 @@
+{
+  "name": "Lion's Roar",
+  "short_name": "Lion",
+  "display": "fullscreen",
+  "start_url": "/Lion-roar/",
+  "background_color": "#0a0a1a",
+  "theme_color": "#0a0a1a",
+  "icons": []
+}
