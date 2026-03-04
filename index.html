@@ -166,15 +166,15 @@ function getAttackCity(stage) { return ATTACK_CITIES[Math.floor((stage - 1) / 2)
 
 const LEVEL_DEFS = {
   defense: {
-    nameHe: 'הגנה!',
+    nameHe: '!הגנה',
     color: '#44aaff',
-    instructionsHe: ['!הגן על הבסיס', 'פגע במשאיות וחסום בארות אדמה', 'שרוד 45 שניות'],
+    instructionsHe: ['הגן על הבסיס', 'פגע במשאיות וחסום את בורות השיגור', 'שרוד 45 שניות'],
     getSubtitle: (_s) => 'שמור על הבסיס',
   },
   attack: {
     nameHe: 'התקפה!',
     color: '#ff4444',
-    instructionsHe: ['!הפל פצצה על המנהיגים', 'פגע במנהיג רץ או הפגז בניין', 'לרשותך 3 מטוסים '],
+    instructionsHe: ['הפל פצצה על המנהיגים', 'פגע במנהיג רץ או הפגז בניין', 'לרשותך 3 מטוסים '],
     getSubtitle: (s) => getAttackCity(s),
   }
 };
@@ -594,12 +594,12 @@ function checkAttackBombHit(bx) {
       if (killed > 0) {
         leadersHit += killed; score += killed;
         addExplosion(b.x, GROUND() - b.height * 0.5, true);
-        if (killed >= 3) showMsg(`🔥 ${killed} מנהיגים!! גאוני!`, '#ffdd00');
-        else if (killed === 2) showMsg(`💥 ${killed} מנהיגים!`, '#ff8800');
-        else showMsg('💥 מנהיג חוסל!', '#ff8800');
+        if (killed >= 3) showMsg(`🔥 ${killed} מנהיגים!! גאוני`, '#ffdd00');
+        else if (killed === 2) showMsg(`💥 ${killed} מנהיגים`, '#ff8800');
+        else showMsg('💥 מנהיג חוסל', '#ff8800');
       } else {
         addExplosion(bx, GROUND(), false);
-        showMsg('🏚️ ריק!', '#aaaaaa');
+        showMsg('🏚️ ריק', '#aaaaaa');
       }
       return;
     }
@@ -611,7 +611,7 @@ function checkAttackBombHit(bx) {
       attackBuildings.forEach(b => { b.leaders = b.leaders.filter(id => id !== leader.id); });
       leadersHit++; score++;
       addExplosion(leader.x, GROUND() - 28, false);
-      showMsg('🎯 נתפס בדרך!', '#00ff88');
+      showMsg('🎯 נתפס בדרך', '#00ff88');
       return;
     }
   }
@@ -695,7 +695,7 @@ function update() {
       const dx=amm.x-m.x, dy=amm.y-m.y;
       if (Math.sqrt(dx*dx+dy*dy) < 40) {
         addExplosion(m.x, m.y, true); score++;
-        showMsg('💥 יירוט!','#00ffff');
+        showMsg('💥 יירוט','#00ffff');
         intercepted = true; return false;
       }
       return true;
@@ -727,11 +727,11 @@ function update() {
           addExplosion(truck.x, truck.y, true);
           if (truck.state === 'fired') {
             truck = null;
-            showMsg('💨 המשגר הושמד!','#ffaa00');
+            showMsg('💨 המשגר הושמד','#ffaa00');
           } else {
             missiles = missiles.filter(m=>m.truckId!==truck.id);
             truck = null; score++;
-            showMsg('🎯 פגיעה!','#00ff88');
+            showMsg('🎯 פגיעה','#00ff88');
           }
           hit = true;
         }
@@ -873,7 +873,7 @@ function drawDefenseHUD() {
   if (phase==='flying') {
     ctx.fillStyle='rgba(255,255,50,0.95)';
     ctx.font=`bold ${Math.max(16,W()*0.032)}px Arial`;
-    ctx.fillText('💣 לחץ להטיל פצצה!', W()/2, Math.min(90,W()*0.13)*0.6+65);
+    ctx.fillText('💣 לחץ להטיל פצצה', W()/2, Math.min(90,W()*0.13)*0.6+65);
   }
   if (phase==='amm_flying') {
     ctx.fillStyle='rgba(0,220,255,0.9)';
@@ -907,7 +907,7 @@ function drawAttackHUD() {
   if (phase==='flying') {
     ctx.fillStyle='rgba(255,255,50,0.95)';
     ctx.font=`bold ${Math.max(16,W()*0.032)}px Arial`;
-    ctx.fillText('💣 לחץ להטיל פצצה!', W()/2, Math.min(90,W()*0.13)*0.6+65);
+    ctx.fillText('💣 לחץ להטיל פצצה', W()/2, Math.min(90,W()*0.13)*0.6+65);
   }
 }
 
@@ -1346,7 +1346,7 @@ function drawStageClear(){
   ctx.fillStyle='rgba(0,0,0,0.68)'; ctx.fillRect(0,0,W(),H());
   ctx.fillStyle='#44ff88';
   ctx.font=`bold ${Math.max(30,W()*0.055)}px Arial`; ctx.textAlign='center';
-  ctx.fillText('✓ שלב הושלם!', W()/2, H()/2-22);
+  ctx.fillText('✓ השלב הושלם', W()/2, H()/2-22);
   if(getLevelType(currentStage)==='attack'){
     ctx.fillStyle='rgba(255,255,255,0.8)';
     ctx.font=`${Math.max(15,W()*0.026)}px Arial`;
@@ -1430,7 +1430,7 @@ async function lbSubmit() {
       body: JSON.stringify({ leaderboardId: LB_ID, playerDisplayName: name, score: String(score) })
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    document.getElementById('lbStatus').textContent = '✅ נשלח בהצלחה!';
+    document.getElementById('lbStatus').textContent = '✅ נשלח בהצלחה';
   } catch {
     document.getElementById('lbStatus').textContent = '⚠️ שגיאה בשליחה — מציג טבלה ישירות';
   }
