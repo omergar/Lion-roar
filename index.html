@@ -10,7 +10,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; }
 canvas { display: block; position: fixed; top: 0; left: 0; }
 #msg { position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%);
   color: #ffdd00; font-size: 28px; font-weight: bold; text-align: center;
-  text-shadow: 0 0 20px #ff8800; pointer-events: none; opacity: 0; transition: opacity 0.3s; white-space: pre-line; }
+  text-shadow: 0 0 20px #ff8800; pointer-events: none; opacity: 0; transition: opacity 0.3s; white-space: pre-line;
+  direction: rtl; unicode-bidi: embed; }
 #rotateOverlay {
   display: none;
   position: fixed; inset: 0;
@@ -159,7 +160,7 @@ const MAX_PULL = 70;
 const MISSILE_L = 55;
 
 // ── LEVEL SYSTEM ──
-const ATTACK_CITIES = ['תהרן', 'איספהאן', 'שיראז', 'נתנז', 'פורדו'];
+const ATTACK_CITIES = ['טהרן', 'איספהאן', 'שיראז', 'נתנז', 'פורדו'];
 function getLevelType(stage) { return stage % 2 === 1 ? 'attack' : 'defense'; }
 function getAttackCity(stage) { return ATTACK_CITIES[Math.floor((stage - 1) / 2) % ATTACK_CITIES.length]; }
 
@@ -637,6 +638,8 @@ function enterStageClear() {
   saveHighScore();
   gameState = 'stageClear';
   stageClearTimer = 210;
+  msgTimer = 0;
+  document.getElementById('msg').style.opacity = '0';
 }
 
 function endGame() {
