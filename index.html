@@ -111,7 +111,7 @@ canvas { display: block; position: fixed; top: 0; left: 0; }
 
 <!-- Leaderboard overlay -->
 <div id="lbOverlay">
-  <h2 id="lbTitle">💔 נגמרו הסיכויים!</h2>
+  <h2 id="lbTitle">💔 !נגמרו הסיכויים</h2>
   <div class="lb-score">ניקוד סופי: <strong id="lbFinalScore">0</strong></div>
   <div class="lb-prompt">הכנס שמך לטבלת השיאים</div>
   <input id="nameInput" type="text" maxlength="20" placeholder="שמך / Your name" autocomplete="off" />
@@ -168,13 +168,13 @@ const LEVEL_DEFS = {
   defense: {
     nameHe: 'הגנה!',
     color: '#44aaff',
-    instructionsHe: ['הגן על הבסיס!', 'פגע במשאיות וחסום בארות אדמה', 'שרוד 45 שניות'],
+    instructionsHe: ['!הגן על הבסיס', 'פגע במשאיות וחסום בארות אדמה', 'שרוד 45 שניות'],
     getSubtitle: (_s) => 'שמור על הבסיס',
   },
   attack: {
     nameHe: 'התקפה!',
     color: '#ff4444',
-    instructionsHe: ['הפל פצצה על המנהיגים!', 'פגע במנהיג רץ או הפגז בניין', '3 מטוסים לכל שלב'],
+    instructionsHe: ['!הפל פצצה על המנהיגים', 'פגע במנהיג רץ או הפגז בניין', 'לרשותך 3 מטוסים '],
     getSubtitle: (s) => getAttackCity(s),
   }
 };
@@ -423,7 +423,7 @@ function updateDefense() {
       if (hole.timer <= 0) {
         fireGroundMissile(hole);
         hole.state = 'fired'; hole.closeTimer = 130;
-        showMsg('🚀 טיל אדמה!', '#ff4444');
+        showMsg('🚀 טיל ', '#ff4444');
       }
     } else { hole.closeTimer--; if (hole.closeTimer <= 0) hole = null; }
   }
@@ -454,7 +454,7 @@ function updateDefense() {
       if (Math.abs(m.x - BASE().x) < 90) {
         addExplosion(m.x, GROUND(), true);
         lives--;
-        showMsg(m.fromGround ? '💥 טיל מהאדמה פגע!' : '💥 הטיל פגע!', '#ff4444');
+        showMsg(m.fromGround ? '💥 טיל קרקע פגע' : '💥 הטיל פגע', '#ff4444');
         if (lives <= 0) endGame();
       }
       m.dead = true;
@@ -470,13 +470,13 @@ function checkDefenseBombHit(bx) {
   if (hole && hole.state === 'active' && Math.abs(bx - hole.x) < 44) {
     hole.state = 'blocked'; hole.closeTimer = 100; score++;
     addExplosion(hole.x, GROUND(), false);
-    showMsg('🕳️ חסמת את הבאר!', '#00ff88'); hit = true;
+    showMsg('🕳️ חסמת את בור השיגור', '#00ff88'); hit = true;
   }
   if (!hit && truck && Math.abs(bx - truck.x) < 70 &&
       (truck.state==='raising'||truck.state==='ready'||truck.state==='fired')) {
     addExplosion(truck.x, truck.y, true);
     missiles = missiles.filter(m => m.truckId !== truck.id);
-    truck = null; score++; showMsg('🎯 פגיעה!', '#00ff88'); hit = true;
+    truck = null; score++; showMsg('🎯 פגיעה', '#00ff88'); hit = true;
   }
   if (!hit) addExplosion(bx, GROUND(), false);
 }
@@ -719,7 +719,7 @@ function update() {
           hole.closeTimer = 100;
           score++;
           addExplosion(hole.x, GROUND(), false);
-          showMsg('🕳️ חסמת את בור השיגור!','#00ff88');
+          showMsg('🕳️ חסמת את בור השיגור','#00ff88');
           hit = true;
         }
         if (!hit && truck && Math.abs(bomb.x - truck.x) < 70 &&
