@@ -217,6 +217,7 @@ let attackBuildings = [];
 let leaders = [];
 let attackPlanesLeft = 3;
 let leadersHit = 0;
+let friendlySoldiers = [];
 
 // ── FLAGS ──
 function drawIranFlag(x, y, w, h) {
@@ -323,6 +324,10 @@ function resetTool() {
 // ── SHARED: PLANE / BOMB ──
 function launchPlane(angle) {
   const a = Math.max(0.1, Math.min(1.48, angle));
+  // Defense round 2+ (stage ≥ 4): minimum 15° launch angle for planes
+  if (currentTool === 'plane' && getLevelType(currentStage) === 'defense' && currentStage >= 4) {
+    if (a < Math.PI * 15 / 180) { showMsg('⬆️ זווית גבוהה יותר!', '#ff8800'); return; }
+  }
   if (currentTool === 'amm') {
     amm = { x: BASE().x, y: BASE().y, vx: Math.cos(a)*15, vy: -Math.sin(a)*15, trail: [] };
     phase = 'amm_flying';
@@ -391,7 +396,8 @@ function fireGroundMissile(h) {
     vx: 0, vy: vy0, g,
     aLateral,
     trail: [], dead: false, truckId: h.id,
-    fromGround: true
+    fromGround: true,
+    canSplit: currentStage >= 4, split: false
   });
 }
 function spawnTruck() {
@@ -435,7 +441,8 @@ function fireMissile() {
     x: startX, y: startY,
     vx: 0, vy: vy0, g,
     aLateral,
-    trail: [], dead: false, truckId: t.id
+    trail: [], dead: false, truckId: t.id,
+    canSplit: currentStage >= 4, split: false
   });
   t.state = 'fired';
   setTimeout(() => { if (truck && truck.id === t.id) truck.state = 'retreating'; }, 600);
@@ -480,12 +487,28 @@ function updateDefense() {
     }
   }
 
+  const newWarheads = [];
   missiles.forEach(m => {
     m.trail.push({x:m.x,y:m.y});
     if (m.trail.length>28) m.trail.shift();
     m.vy += (m.g ?? 0.07);
     if (m.aLateral) m.vx += m.aLateral; // smooth lateral acceleration (curved arc)
     m.x += m.vx; m.y += m.vy;
+
+    // Warhead split: missile crosses the 1/3 mark in defense stage 2+
+    if (!m.dead && m.canSplit && !m.split && m.x <= W()/3) {
+      m.dead = true; m.split = true;
+      showMsg('⚠️ ראשות קרב!', '#ff4444');
+      [-2.5, -0.8, 0.8, 2.5].forEach(dvx => {
+        newWarheads.push({
+          x: m.x, y: m.y,
+          vx: m.vx + dvx, vy: m.vy, g: m.g,
+          aLateral: 0, trail: [], dead: false,
+          isWarhead: true, canSplit: false, split: true,
+          fromGround: m.fromGround
+        });
+      });
+    }
 
     // Primary hit: missile reaches the ground near the player
     if (!m.dead && m.y >= GROUND() - 8) {
@@ -501,6 +524,7 @@ function updateDefense() {
     if (!m.dead && (m.y > H()+50 || m.x < -60 || m.x > W()+60)) m.dead = true;
   });
   missiles = missiles.filter(m => !m.dead);
+  missiles.push(...newWarheads);
 }
 
 function checkDefenseBombHit(bx) {
@@ -545,6 +569,13 @@ function initAttack() {
   attackPlanesLeft = 3;
   leadersHit = 0;
   leaders = [];
+  friendlySoldiers = [];
+  if (currentStage >= 3) {
+    const count = currentStage >= 5 ? 3 : 2;
+    for (let i = 0; i < count; i++) {
+      friendlySoldiers.push({ x: -60 - i * 90, y: GROUND() - 8, vx: 0.6, dead: false });
+    }
+  }
   // Distribute 10 leaders across buildings
   for (let i = 0; i < 10; i++) {
     const bIdx = Math.floor(Math.random() * attackBuildings.length);
@@ -608,9 +639,23 @@ function updateAttack() {
       }
     }
   });
+
+  // Advance friendly soldiers
+  friendlySoldiers.forEach(s => { if (!s.dead) { s.x += s.vx; if (s.x > W() + 60) s.dead = true; } });
+  friendlySoldiers = friendlySoldiers.filter(s => !s.dead);
 }
 
 function checkAttackBombHit(bx) {
+  // Friendly fire check first
+  for (const s of friendlySoldiers) {
+    if (!s.dead && Math.abs(bx - s.x) < 28) {
+      s.dead = true; lives--;
+      addExplosion(s.x, GROUND() - 20, false);
+      showMsg('💔 ירית חייל ידידותי!', '#ff4444');
+      if (lives <= 0) endGame();
+      return;
+    }
+  }
   // Primary mechanic: bomb a building → kill EVERYONE inside it (the gathering).
   // Also catch any runners/poppers visually near the blast radius.
   for (const b of attackBuildings) {
@@ -661,6 +706,7 @@ function checkAttackBombHit(bx) {
 function startStage() {
   gameState = 'playing';
   phase = 'aim'; plane = null; bomb = null; amm = null; explosions = []; isDragging = false;
+  friendlySoldiers = [];
   currentTool = getLevelType(currentStage) === 'defense' ? pickTool() : 'plane';
   document.getElementById('msg').style.opacity = '0';
   const type = getLevelType(currentStage);
@@ -693,7 +739,7 @@ function resetGame() {
   score = 0; lives = 3; currentStage = 1;
   gameState = 'welcome';
   phase = 'aim'; plane = null; bomb = null; amm = null; currentTool = 'plane';
-  explosions = []; missiles = []; truck = null; hole = null;
+  explosions = []; missiles = []; truck = null; hole = null; friendlySoldiers = [];
   frameCount = 0; defenseFrameCount = 0;
   attackBuildings = generateBuildings(1);
   document.getElementById('msg').style.opacity = '0';
@@ -733,7 +779,7 @@ function update() {
     let intercepted = false;
     missiles = missiles.filter(m => {
       const dx=amm.x-m.x, dy=amm.y-m.y;
-      if (Math.sqrt(dx*dx+dy*dy) < 40) {
+      if (!m.isWarhead && Math.sqrt(dx*dx+dy*dy) < 40) {
         addExplosion(m.x, m.y, true); score++;
         showMsg('💥 יירוט','#00ffff');
         intercepted = true; return false;
@@ -1277,6 +1323,37 @@ function drawLeaders(){
   });
 }
 
+// ── DRAW: FRIENDLY SOLDIERS ──
+function drawFriendlySoldiers() {
+  friendlySoldiers.forEach(s => {
+    if (s.dead) return;
+    const sx = s.x, sy = s.y;
+    // Body (olive green IDF uniform)
+    ctx.fillStyle = '#556b2f';
+    ctx.fillRect(sx - 5, sy - 20, 10, 14);
+    // Head
+    ctx.fillStyle = '#c8956c';
+    ctx.beginPath(); ctx.arc(sx, sy - 26, 6, 0, Math.PI * 2); ctx.fill();
+    // Helmet
+    ctx.fillStyle = '#4a5a2a';
+    ctx.beginPath(); ctx.ellipse(sx, sy - 30, 8, 5, 0, Math.PI, 0); ctx.fill();
+    ctx.fillRect(sx - 8, sy - 30, 16, 4);
+    // Walking legs
+    const leg = Math.sin(frameCount * 0.35) * 7;
+    ctx.strokeStyle = '#4a5822'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(sx, sy - 8); ctx.lineTo(sx - 4 + leg, sy + 8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx, sy - 8); ctx.lineTo(sx + 4 - leg, sy + 8); ctx.stroke();
+    // Rifle (pointing forward/right)
+    ctx.strokeStyle = '#222'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(sx + 4, sy - 17); ctx.lineTo(sx + 20, sy - 13); ctx.stroke();
+    // Friendly marker (Star of David)
+    ctx.fillStyle = 'rgba(60,160,255,0.95)';
+    ctx.font = `${Math.max(9, W() * 0.014)}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.fillText('✡', sx, sy - 42);
+  });
+}
+
 // ── DRAW: DEFENSE ENTITIES ──
 function drawTruck(){
   if(!truck) return;
@@ -1312,19 +1389,29 @@ function drawTruck(){
 
 function drawMissiles(){
   missiles.forEach(m=>{
+    const trailColor = m.isWarhead ? '255,60,60' : '255,120,0';
     m.trail.forEach((p,i)=>{
-      ctx.fillStyle=`rgba(255,120,0,${i/m.trail.length*0.5})`;
-      ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle=`rgba(${trailColor},${i/m.trail.length*0.5})`;
+      ctx.beginPath(); ctx.arc(p.x,p.y, m.isWarhead?2:3, 0,Math.PI*2); ctx.fill();
     });
     ctx.save(); ctx.translate(m.x,m.y); ctx.rotate(Math.atan2(m.vy,m.vx));
-    ctx.fillStyle='#cc1100'; ctx.beginPath(); ctx.ellipse(0,0,MISSILE_L/2,7,0,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#dd6600'; ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-6); ctx.lineTo(MISSILE_L/2,6); ctx.closePath(); ctx.fill();
-    ctx.fillStyle='rgba(255,200,80,0.7)'; ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-3); ctx.lineTo(MISSILE_L/2+8,0); ctx.closePath(); ctx.fill();
-    const fl=Math.random();
-    ctx.fillStyle=`rgba(255,${100+Math.floor(fl*100)},0,0.85)`;
-    ctx.beginPath(); ctx.moveTo(-MISSILE_L/2,-6); ctx.lineTo(-MISSILE_L/2,6); ctx.lineTo(-MISSILE_L/2-18-fl*8,0); ctx.closePath(); ctx.fill();
-    ctx.fillStyle='rgba(255,240,120,0.9)';
-    ctx.beginPath(); ctx.moveTo(-MISSILE_L/2,-2.5); ctx.lineTo(-MISSILE_L/2,2.5); ctx.lineTo(-MISSILE_L/2-10,0); ctx.closePath(); ctx.fill();
+    if (m.isWarhead) {
+      // Smaller wedge-shaped warhead
+      ctx.fillStyle='#ff2200';
+      ctx.beginPath(); ctx.moveTo(10,0); ctx.lineTo(-7,-4); ctx.lineTo(-7,4); ctx.closePath(); ctx.fill();
+      const fl=Math.random();
+      ctx.fillStyle=`rgba(255,${80+Math.floor(fl*80)},0,0.85)`;
+      ctx.beginPath(); ctx.moveTo(-7,-3); ctx.lineTo(-7,3); ctx.lineTo(-7-8-fl*4,0); ctx.closePath(); ctx.fill();
+    } else {
+      ctx.fillStyle='#cc1100'; ctx.beginPath(); ctx.ellipse(0,0,MISSILE_L/2,7,0,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#dd6600'; ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-6); ctx.lineTo(MISSILE_L/2,6); ctx.closePath(); ctx.fill();
+      ctx.fillStyle='rgba(255,200,80,0.7)'; ctx.beginPath(); ctx.moveTo(MISSILE_L/2+20,0); ctx.lineTo(MISSILE_L/2,-3); ctx.lineTo(MISSILE_L/2+8,0); ctx.closePath(); ctx.fill();
+      const fl=Math.random();
+      ctx.fillStyle=`rgba(255,${100+Math.floor(fl*100)},0,0.85)`;
+      ctx.beginPath(); ctx.moveTo(-MISSILE_L/2,-6); ctx.lineTo(-MISSILE_L/2,6); ctx.lineTo(-MISSILE_L/2-18-fl*8,0); ctx.closePath(); ctx.fill();
+      ctx.fillStyle='rgba(255,240,120,0.9)';
+      ctx.beginPath(); ctx.moveTo(-MISSILE_L/2,-2.5); ctx.lineTo(-MISSILE_L/2,2.5); ctx.lineTo(-MISSILE_L/2-10,0); ctx.closePath(); ctx.fill();
+    }
     ctx.restore();
   });
 }
@@ -1494,6 +1581,7 @@ function draw(){
   } else {
     drawAttackBg();
     drawFlags();
+    drawFriendlySoldiers();
     drawLeaders();
     drawSlingshot();
     drawPlane();
