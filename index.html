@@ -311,6 +311,8 @@ window.addEventListener('keydown', e => {
 // ── TOOL SELECTION ──
 function pickTool() {
   if (getLevelType(currentStage) === 'attack') return 'plane';
+  // Force AMM while a launch hole is open (player must intercept incoming salvo)
+  if (hole && (hole.state === 'active' || hole.state === 'firing')) return 'amm';
   // Offer AMM when enemy missiles are airborne (60% chance), else occasionally (20%)
   if (missiles.length > 0 && Math.random() < 0.6) return 'amm';
   if (Math.random() < 0.2) return 'amm';
@@ -323,10 +325,10 @@ function resetTool() {
 
 // ── SHARED: PLANE / BOMB ──
 function launchPlane(angle) {
-  const a = Math.max(0.1, Math.min(1.48, angle));
-  // Defense round 2+ (stage ≥ 4): minimum 15° launch angle for planes
+  let a = Math.max(0.1, Math.min(1.48, angle));
+  // Defense stage 4+: clamp to minimum 15° (slingshot snaps up, plane never flies too flat)
   if (currentTool === 'plane' && getLevelType(currentStage) === 'defense' && currentStage >= 4) {
-    if (a < Math.PI * 15 / 180) { showMsg('⬆️ זווית גבוהה יותר!', '#ff8800'); return; }
+    a = Math.max(a, Math.PI * 15 / 180);
   }
   if (currentTool === 'amm') {
     amm = { x: BASE().x, y: BASE().y, vx: Math.cos(a)*15, vy: -Math.sin(a)*15, trail: [] };
@@ -372,13 +374,18 @@ function diffProgress() { return Math.min(score / 20, 1); }
 function spawnHole() {
   const wBonus = W() > 800 ? Math.round((W() - 800) * 0.12) : 0; // extra time on wide screens
   const timer = Math.max(90, Math.round(240 - diffProgress() * 150)) + wBonus;
+  const salvoCount = currentStage >= 4 ? 3 : 1;
+  const salvoInterval = currentStage >= 4 ? Math.max(35, 60 - Math.floor((currentStage - 4) / 2) * 8) : 60;
   hole = {
     x: W()*0.38 + Math.random()*W()*0.45,
-    state: 'active', // active|blocked|fired
+    state: 'active', // active|firing|blocked|fired
     timer: timer, maxTimer: timer,
     closeTimer: 0,
+    salvoCount, salvoInterval, salvoFired: 0, salvoTimer: 0,
     id: Math.random()
   };
+  // Immediately switch to AMM so player can intercept
+  if (phase === 'aim') currentTool = 'amm';
 }
 function fireGroundMissile(h) {
   const mSpeed = 0.65 + diffProgress() * 0.35;
@@ -403,10 +410,14 @@ function fireGroundMissile(h) {
 function spawnTruck() {
   const stopX = W()*0.55 + Math.random()*W()*0.28;
   const wBonus = W() > 800 ? Math.round((W() - 800) * 0.12) : 0;
+  // Stage 4+: pick a second stop position (left or right of first, clamped to screen)
+  const stopX2 = currentStage >= 4
+    ? Math.min(W()-100, Math.max(W()*0.2, stopX + (Math.random() < 0.5 ? -1 : 1) * (W()*0.1 + Math.random()*W()*0.2)))
+    : stopX;
   truck = {
     x: W()+130, y: GROUND()-28,
-    targetX: stopX,
-    state: 'driving', // driving|raising|ready|fired|retreating
+    targetX: stopX, targetX2: stopX2,
+    state: 'driving', // driving|repositioning|raising|ready|fired|retreating
     angle: 0,         // 0=horizontal, 90=vertical (launch)
     readyTimer: Math.max(50, 140 - diffProgress() * 80) + Math.random() * 40 + wBonus,
     id: Math.random()
@@ -467,8 +478,25 @@ function updateDefense() {
       hole.timer--;
       if (hole.timer <= 0) {
         fireGroundMissile(hole);
-        hole.state = 'fired'; hole.closeTimer = 130;
-        showMsg('🚀 טיל ', '#ff4444');
+        hole.salvoFired = 1;
+        showMsg('🚀 טיל!', '#ff4444');
+        if (hole.salvoCount > 1) {
+          hole.state = 'firing'; hole.salvoTimer = hole.salvoInterval;
+        } else {
+          hole.state = 'fired'; hole.closeTimer = 130;
+        }
+      }
+    } else if (hole.state === 'firing') {
+      hole.salvoTimer--;
+      if (hole.salvoTimer <= 0) {
+        fireGroundMissile(hole);
+        hole.salvoFired++;
+        showMsg('🚀 טיל!', '#ff4444');
+        if (hole.salvoFired >= hole.salvoCount) {
+          hole.state = 'fired'; hole.closeTimer = 130;
+        } else {
+          hole.salvoTimer = hole.salvoInterval;
+        }
       }
     } else { hole.closeTimer--; if (hole.closeTimer <= 0) hole = null; }
   }
@@ -477,7 +505,15 @@ function updateDefense() {
     const t = truck;
     if (t.state === 'driving') {
       t.x -= 2.5 + diffProgress() * 2.5;
-      if (t.x <= t.targetX) { t.x = t.targetX; t.state = 'raising'; }
+      if (t.x <= t.targetX) {
+        t.x = t.targetX;
+        t.state = (currentStage >= 4 && t.targetX2 !== t.targetX) ? 'repositioning' : 'raising';
+      }
+    } else if (t.state === 'repositioning') {
+      const dx = t.targetX2 - t.x;
+      const spd = 2.0 + diffProgress() * 1.5;
+      if (Math.abs(dx) <= spd) { t.x = t.targetX2; t.state = 'raising'; }
+      else { t.x += Math.sign(dx) * spd; }
     } else if (t.state === 'raising') {
       t.angle += 1.0; if (t.angle >= 90) { t.angle = 90; t.state = 'ready'; }
     } else if (t.state === 'ready') {
@@ -571,9 +607,10 @@ function initAttack() {
   leaders = [];
   friendlySoldiers = [];
   if (currentStage >= 3) {
-    const count = currentStage >= 5 ? 3 : 2;
+    const count = Math.min(5, 2 + Math.floor((currentStage - 3) / 2));
+    const vx = 0.72 + (currentStage - 3) * 0.06;
     for (let i = 0; i < count; i++) {
-      friendlySoldiers.push({ x: -60 - i * 90, y: GROUND() - 8, vx: 0.6, dead: false });
+      friendlySoldiers.push({ x: -60 - i * 90, y: GROUND() - 8, vx, dead: false });
     }
   }
   // Distribute 10 leaders across buildings
@@ -1370,7 +1407,7 @@ function drawTruck(){
   ctx.fillStyle='#c8a070'; ctx.beginPath(); ctx.arc(0,-12,6,0,Math.PI*2); ctx.fill();
   ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(0,-15,7,Math.PI,Math.PI*2); ctx.fill();
   ctx.restore();
-  if(t.state==='driving'||t.state==='raising'||t.state==='ready'){
+  if(t.state==='driving'||t.state==='repositioning'||t.state==='raising'||t.state==='ready'){
     const e=enginePt(t), n=nosePt(t);
     const dx=n.x-e.x, dy=n.y-e.y;
     const bodyAngle=Math.atan2(dy,dx), midX=(e.x+n.x)/2, midY=(e.y+n.y)/2;
@@ -1435,9 +1472,22 @@ function drawHole(){
     ctx.font=`bold ${Math.max(13,W()*0.021)}px Arial`; ctx.textAlign='center';
     ctx.fillText('⚠',gx,gy-27);
   }
+  if(h.state==='firing'){
+    const pulse=0.5+Math.sin(frameCount*0.5)*0.5;
+    ctx.save();
+    ctx.shadowBlur=22; ctx.shadowColor='#ff2200';
+    ctx.fillStyle=`rgba(255,30,0,${pulse})`;
+    ctx.font=`bold ${Math.max(13,W()*0.021)}px Arial`; ctx.textAlign='center';
+    ctx.fillText('⚠',gx,gy-27);
+    ctx.restore();
+    // Salvo counter
+    ctx.fillStyle='rgba(255,80,80,0.9)';
+    ctx.font=`${Math.max(10,W()*0.016)}px Arial`; ctx.textAlign='center';
+    ctx.fillText(`${h.salvoFired}/${h.salvoCount}`,gx,gy-42);
+  }
   ctx.fillStyle='#1e3010'; ctx.fillRect(gx-hW-10,gy,(hW+10)*2,22);
   ctx.fillStyle='#06060c'; ctx.beginPath(); ctx.ellipse(gx,gy+7,hW,hH,0,0,Math.PI*2); ctx.fill();
-  ctx.strokeStyle=h.state==='blocked'?'#22aa44':'#7a4012'; ctx.lineWidth=3;
+  ctx.strokeStyle=h.state==='blocked'?'#22aa44':h.state==='firing'?'#ff3300':'#7a4012'; ctx.lineWidth=3;
   ctx.beginPath(); ctx.ellipse(gx,gy+7,hW,hH,0,0,Math.PI*2); ctx.stroke();
   ctx.fillStyle='#3a4e18';
   [[-hW*0.75,-5],[hW*0.75,-5],[-hW*0.38,-9],[hW*0.38,-9]].forEach(([dx,dy])=>{
