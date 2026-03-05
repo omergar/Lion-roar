@@ -722,8 +722,8 @@ function checkAttackBombHit(bx) {
       if (killed > 0) {
         leadersHit += killed; score += killed;
         addExplosion(b.x, GROUND() - b.height * 0.5, true);
-        if (killed >= 3) showMsg(`🔥 מנהיגים!! גאוני ${killed}`, '#ffdd00');
-        else if (killed === 2) showMsg(`💥 מנהיגים ${killed}`, '#ff8800');
+        if (killed >= 3) showMsg(`חוסלו ${killed} 🔥 מנהיגים!! גאוני `, '#ffdd00');
+        else if (killed === 2) showMsg(`חוסלו ${killed} 💥 מנהיגים`, '#ff8800');
         else showMsg('💥 מנהיג חוסל', '#ff8800');
       } else {
         addExplosion(bx, GROUND(), false);
