@@ -1008,7 +1008,7 @@ function drawDefenseHUD() {
   if (phase==='amm_flying') {
     ctx.fillStyle='rgba(0,220,255,0.9)';
     ctx.font=`bold ${Math.max(14,W()*0.026)}px Arial`;
-    ctx.fillText('🚀 טיל יירוט בדרך...', W()/2, Math.min(90,W()*0.13)*0.6+65);
+    ctx.fillText('🚀 ...טיל יירוט בדרך', W()/2, Math.min(90,W()*0.13)*0.6+65);
   }
 }
 
@@ -1612,7 +1612,7 @@ function drawStageClear(){
   }
   ctx.fillStyle='rgba(255,220,80,0.7)';
   ctx.font=`${Math.max(12,W()*0.019)}px Arial`;
-  ctx.fillText('מתכונן לשלב הבא...', W()/2, H()/2+62);
+  ctx.fillText('...מתכונן לשלב הבא', W()/2, H()/2+62);
 }
 
 // ── MAIN DRAW ──
@@ -1678,7 +1678,7 @@ async function lbSubmit() {
 
   localStorage.setItem('lionRoarPlayerName', name);
   const btn = document.getElementById('lbSubmitBtn');
-  btn.textContent = '⏳ שולח...'; btn.disabled = true;
+  btn.textContent = '⏳ ...שולח'; btn.disabled = true;
   document.getElementById('lbSkipBtn').style.display = 'none';
   document.getElementById('lbStatus').textContent = '';
 
@@ -1709,7 +1709,7 @@ async function lbFetch() {
   const table = document.getElementById('lbTable');
   const entriesDiv = document.getElementById('lbEntries');
   table.style.display = 'block';
-  entriesDiv.innerHTML = '<div style="color:#888;text-align:center;padding:8px">טוען...</div>';
+  entriesDiv.innerHTML = '<div style="color:#888;text-align:center;padding:8px">...טוען</div>';
 
   try {
     const res = await fetch(`${LB_API}/leaderboards/${LB_ID}/entries`, {
