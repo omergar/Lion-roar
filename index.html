@@ -218,6 +218,7 @@ let leaders = [];
 let attackPlanesLeft = 3;
 let leadersHit = 0;
 let friendlySoldiers = [];
+let warheadHitIds = new Set(); // tracks splitIds that already dealt damage this stage
 
 // ── FLAGS ──
 function drawIranFlag(x, y, w, h) {
@@ -535,12 +536,13 @@ function updateDefense() {
     if (!m.dead && m.canSplit && !m.split && m.x <= W()/3) {
       m.dead = true; m.split = true;
       showMsg('⚠️ ראשות קרב!', '#ff4444');
+      const splitId = Math.random();
       [-2.5, -0.8, 0.8, 2.5].forEach(dvx => {
         newWarheads.push({
           x: m.x, y: m.y,
           vx: m.vx + dvx, vy: m.vy, g: m.g,
           aLateral: 0, trail: [], dead: false,
-          isWarhead: true, canSplit: false, split: true,
+          isWarhead: true, splitId, canSplit: false, split: true,
           fromGround: m.fromGround
         });
       });
@@ -550,9 +552,13 @@ function updateDefense() {
     if (!m.dead && m.y >= GROUND() - 8) {
       if (Math.abs(m.x - BASE().x) < 90) {
         addExplosion(m.x, GROUND(), true);
-        lives--;
-        showMsg(m.fromGround ? '💥 טיל קרקע פגע' : '💥 הטיל פגע', '#ff4444');
-        if (lives <= 0) endGame();
+        // Warheads from the same split only cost 1 life total
+        if (!m.isWarhead || !warheadHitIds.has(m.splitId)) {
+          if (m.splitId !== undefined) warheadHitIds.add(m.splitId);
+          lives--;
+          showMsg(m.fromGround ? '💥 טיל קרקע פגע' : '💥 הטיל פגע', '#ff4444');
+          if (lives <= 0) endGame();
+        }
       }
       m.dead = true;
     }
@@ -743,7 +749,7 @@ function checkAttackBombHit(bx) {
 function startStage() {
   gameState = 'playing';
   phase = 'aim'; plane = null; bomb = null; amm = null; explosions = []; isDragging = false;
-  friendlySoldiers = [];
+  friendlySoldiers = []; warheadHitIds = new Set();
   currentTool = getLevelType(currentStage) === 'defense' ? pickTool() : 'plane';
   document.getElementById('msg').style.opacity = '0';
   const type = getLevelType(currentStage);
@@ -776,7 +782,7 @@ function resetGame() {
   score = 0; lives = 3; currentStage = 1;
   gameState = 'welcome';
   phase = 'aim'; plane = null; bomb = null; amm = null; currentTool = 'plane';
-  explosions = []; missiles = []; truck = null; hole = null; friendlySoldiers = [];
+  explosions = []; missiles = []; truck = null; hole = null; friendlySoldiers = []; warheadHitIds = new Set();
   frameCount = 0; defenseFrameCount = 0;
   attackBuildings = generateBuildings(1);
   document.getElementById('msg').style.opacity = '0';
