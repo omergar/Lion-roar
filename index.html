@@ -312,8 +312,8 @@ window.addEventListener('keydown', e => {
 // ── TOOL SELECTION ──
 function pickTool() {
   if (getLevelType(currentStage) === 'attack') return 'plane';
-  // Force AMM while a launch hole is open (player must intercept incoming salvo)
-  if (hole && (hole.state === 'active' || hole.state === 'firing')) return 'amm';
+  // Force AMM only once the hole is actively firing (not during the countdown)
+  if (hole && hole.state === 'firing') return 'amm';
   // Offer AMM when enemy missiles are airborne (60% chance), else occasionally (20%)
   if (missiles.length > 0 && Math.random() < 0.6) return 'amm';
   if (Math.random() < 0.2) return 'amm';
@@ -385,8 +385,6 @@ function spawnHole() {
     salvoCount, salvoInterval, salvoFired: 0, salvoTimer: 0,
     id: Math.random()
   };
-  // Immediately switch to AMM so player can intercept
-  if (phase === 'aim') currentTool = 'amm';
 }
 function fireGroundMissile(h) {
   const mSpeed = 0.65 + diffProgress() * 0.35;
@@ -483,13 +481,16 @@ function updateDefense() {
         showMsg('🚀 טיל!', '#ff4444');
         if (hole.salvoCount > 1) {
           hole.state = 'firing'; hole.salvoTimer = hole.salvoInterval;
+          // Switch to AMM now that missiles are incoming (only if not mid-flight)
+          if (phase === 'aim') currentTool = 'amm';
         } else {
           hole.state = 'fired'; hole.closeTimer = 130;
         }
       }
     } else if (hole.state === 'firing') {
       hole.salvoTimer--;
-      if (hole.salvoTimer <= 0) {
+      // Wait for the player to have an AMM ready on the slingshot before next launch
+      if (hole.salvoTimer <= 0 && phase === 'aim') {
         fireGroundMissile(hole);
         hole.salvoFired++;
         showMsg('🚀 טיל!', '#ff4444');
